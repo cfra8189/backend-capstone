@@ -145,6 +145,65 @@ async function main() {
     });
   });
 
+  // Simple proxy for oEmbed endpoints to avoid CORS issues from the browser.
+  // Clients should call `/api/oembed?url=${encodeURIComponent(oembedUrl)}`
+  app.get("/api/oembed", async (req: any, res) => {
+    try {
+      const target = req.query?.url;
+      if (!target) return res.status(400).json({ message: "Missing url parameter" });
+      const originalUrl = String(target);
+
+      // First fetch the provided URL to follow redirects and learn the final destination
+      const initialResp = await fetch(originalUrl, { headers: { "User-Agent": "TheBox/1.0" }, redirect: "follow" });
+      const finalUrl = initialResp.url || originalUrl;
+      const initialContentType = initialResp.headers.get("content-type") || "";
+
+      // Provider-specific handling: Pinterest short links (pin.it) often redirect to a canonical
+      // /pin/<id>/ page and the widgets oEmbed endpoint expects that canonical URL.
+      if (/\b(pin\.it|pinterest)\b/i.test(finalUrl)) {
+        try {
+          const pinterestOembed = `https://widgets.pinterest.com/oembed.json/?url=${encodeURIComponent(finalUrl)}`;
+          const oeResp = await fetch(pinterestOembed, { headers: { "User-Agent": "TheBox/1.0" } });
+          const oeContentType = oeResp.headers.get("content-type") || "";
+          if (oeResp.ok && oeContentType.includes("application/json")) {
+            const data = await oeResp.json();
+            res.setHeader("Content-Type", "application/json");
+            return res.json(data);
+          }
+          // If the Pinterest oEmbed endpoint didn't return usable JSON, fall through to HTML parsing
+        } catch (e) {
+          // ignore and fallback to HTML parsing
+        }
+
+        // Parse the HTML of the final page to extract Open Graph / Twitter meta images
+        const html = await initialResp.text();
+        const m = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/i);
+        if (m && m[1]) {
+          res.setHeader("Content-Type", "application/json");
+          return res.json({ thumbnail_url: m[1], source: "og" });
+        }
+
+        // As a last resort return the HTML so the client can attempt to extract data
+        res.setHeader("Content-Type", "application/json");
+        return res.json({ html, contentType: initialContentType });
+      }
+
+      // Default behavior for other providers: if JSON, return it, otherwise return HTML
+      if (initialContentType.includes("application/json")) {
+        const data = await initialResp.json();
+        res.setHeader("Content-Type", "application/json");
+        return res.json(data);
+      }
+
+      const text = await initialResp.text();
+      res.setHeader("Content-Type", "application/json");
+      return res.json({ html: text, contentType: initialContentType });
+    } catch (err) {
+      console.error("oEmbed proxy error:", err);
+      res.status(500).json({ message: "Failed to proxy oEmbed" });
+    }
+  });
+
   // Only set up platform-specific integrations (OIDC, object storage)
   // when the environment provides PLATFORM_ID or ISSUER_URL. This allows
   // running the server locally without Replit/platform services configured.

@@ -3,6 +3,7 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import path from "path";
+import fs from "fs";
 import http from "http";
 import { fileURLToPath } from "url";
 
@@ -53,6 +54,32 @@ const app = express();
     app.use(cookieParser());
     app.use(passport.initialize());
     app.use(passport.session());
+    
+    // Configure Passport serialization for sessions
+    passport.serializeUser((user: any, done) => {
+      done(null, user._id || user);
+    });
+    
+    passport.deserializeUser(async (id: any, done) => {
+      try {
+        // Handle both string IDs and session objects
+        const userId = typeof id === 'string' ? id : id?.claims?.sub;
+        if (!userId) {
+          return done(new Error('Invalid user ID'), null);
+        }
+        const user = await User.findById(userId);
+        done(null, user);
+      } catch (err) {
+        done(err, null);
+      }
+    });
+    // Normalize req.user so routes can use req.user.claims.sub (Mongoose doc has _id, not claims)
+    app.use((req: any, _res, next) => {
+      if (req.user && req.user._id && !req.user.claims) {
+        req.user.claims = { sub: req.user._id.toString() };
+      }
+      next();
+    });
     passportEnabled = true;
   }
 
@@ -133,8 +160,8 @@ async function main() {
     try {
     // setupGoogleAuth will return early if GOOGLE_CLIENT_ID/SECRET are not set
     const { setupGoogleAuth } = await import("./auth/google");
-    const enabled = setupGoogleAuth(app);
-    if (enabled) googleConfigured = true;
+    // We'll set up Google OAuth after we know the actual port
+    googleConfigured = true; // Mark as configured, will be set up after server starts
   } catch (err) {
     console.error("Failed to configure Google OAuth:", err);
   }
@@ -1385,6 +1412,64 @@ async function main() {
     }
   });
 
+  app.get("/api/auth/verify", async (req: any, res) => {
+    try {
+      const { token } = req.query;
+
+      if (!token) {
+        return res.status(400).json({ message: "Token is required" });
+      }
+
+      const user = await User.findById(req.user?.claims?.sub);
+      if (!user) {
+        return res.status(401).json({ message: "Invalid token" });
+      }
+
+      res.json({
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profileImageUrl: user.profileImageUrl,
+        role: user.role,
+        businessName: user.businessName,
+        displayName: user.displayName,
+        boxCode: user.boxCode,
+        authType: user.authType
+      });
+    } catch (error) {
+      console.error("Auth verify error:", error);
+      res.status(500).json({ message: "Failed to verify token" });
+    }
+  });
+
+  app.get("/api/auth/user", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await User.findById(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json({
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profileImageUrl: user.profileImageUrl,
+        role: user.role,
+        businessName: user.businessName,
+        displayName: user.displayName,
+        boxCode: user.boxCode,
+        authType: user.authType
+      });
+    } catch (error) {
+      console.error("Get user error:", error);
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
   const possiblePaths = [
     path.resolve(__dirname, "..", "public"),
     path.resolve(__dirname, "..", "dist", "public"),
@@ -1395,11 +1480,8 @@ async function main() {
   const publicDir = possiblePaths.find(p => fs.existsSync(path.join(p, "index.html")));
   if (publicDir) {
     app.use(express.static(publicDir, { maxAge: "1d" }));
-    app.get("*", (_req, res) => {
-      res.sendFile(path.join(publicDir, "index.html"));
-    });
   } else {
-    // No public files found — not adding to startup notes
+    console.log("No public directory found - serving API only");
   }
 
   app.use((err: any, _req: any, res: any, _next: any) => {
@@ -1409,7 +1491,7 @@ async function main() {
     }
   });
 
-  const requestedPort = process.env.PORT ? parseInt(process.env.PORT) : undefined;
+  const requestedPort = process.env.PORT ? parseInt(process.env.PORT) : 61234;
   const server = http.createServer(app);
   server.on("error", (err: any) => {
     if (err && err.code === "EADDRINUSE") {
@@ -1419,9 +1501,35 @@ async function main() {
     console.error("Server error:", err?.message || String(err));
     process.exit(1);
   });
-  server.listen(requestedPort ?? 0, "0.0.0.0", () => {
+  server.listen(requestedPort ?? 0, "0.0.0.0", async () => {
     const addr: any = server.address();
     const actualPort = addr && addr.port ? addr.port : '(unknown)';
+    
+    // Update frontend .env file with the actual backend port
+    try {
+      const frontendEnvPath = path.join(__dirname, '..', 'frontend', '.env');
+      const backendUrl = `http://localhost:${actualPort}`;
+      const envContent = `# This file is automatically updated by backend startup
+VITE_BACKEND_URL=${backendUrl}
+`;
+      fs.writeFileSync(frontendEnvPath, envContent);
+      console.log(`Updated frontend .env with backend URL: ${backendUrl}`);
+    } catch (err) {
+      console.error("Failed to update frontend .env:", err);
+    }
+    
+    // Set up Google OAuth with actual port
+    if (googleConfigured) {
+      try {
+        const { setupGoogleAuth } = await import("./auth/google");
+        const enabled = setupGoogleAuth(app, actualPort);
+        if (!enabled) googleConfigured = false;
+      } catch (err) {
+        console.error("Failed to set up Google OAuth after server start:", err);
+        googleConfigured = false;
+      }
+    }
+    
     const parts: string[] = [];
     if (mongoConnected) parts.push("MongoDB connected");
     if (passportEnabled) parts.push("Passport enabled");

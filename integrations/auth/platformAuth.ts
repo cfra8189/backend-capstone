@@ -179,8 +179,9 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
+  // Session/user from dev (Passport + Mongoose) has _id but no claims/expires_at
   if (!user.expires_at) {
-    if (user.claims?.sub) {
+    if (user.claims?.sub || user._id) {
       return next();
     }
     return res.status(401).json({ message: "Unauthorized" });

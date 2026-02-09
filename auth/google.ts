@@ -15,7 +15,7 @@ function generateBoxCode(): string {
   return code;
 }
 
-export function setupGoogleAuth(app: Express) {
+export function setupGoogleAuth(app: Express, serverPort?: number) {
   const clientID = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
@@ -23,12 +23,15 @@ export function setupGoogleAuth(app: Express) {
     return;
   }
 
+  // Use dynamic callback URL based on server port, fallback to env var or defaults
   const callbackURL = process.env.GOOGLE_CALLBACK_URL ||
-    (process.env.PLATFORM_DEV_DOMAIN
-      ? `https://${process.env.PLATFORM_DEV_DOMAIN}/api/auth/google/callback`
-      : (process.env.PLATFORM_DOMAINS
-        ? `https://${process.env.PLATFORM_DOMAINS.split(",")[0]}/api/auth/google/callback`
-        : "http://localhost:5000/api/auth/google/callback"));
+    (serverPort 
+      ? `http://localhost:${serverPort}/api/auth/google/callback`
+      : (process.env.PLATFORM_DEV_DOMAIN
+        ? `https://${process.env.PLATFORM_DEV_DOMAIN}/api/auth/google/callback`
+        : (process.env.PLATFORM_DOMAINS
+          ? `https://${process.env.PLATFORM_DOMAINS.split(",")[0]}/api/auth/google/callback`
+          : "http://localhost:5000/api/auth/google/callback")));
 
   passport.use(new GoogleStrategy({
     clientID,

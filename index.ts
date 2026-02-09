@@ -491,6 +491,29 @@ async function main() {
     }
   });
 
+  // Browser GET fallback for `/api/logout` (some frontend anchors use GET)
+  app.get("/api/logout", async (req: any, res) => {
+    try {
+      const token = req.cookies?.refresh_token;
+      if (token) {
+        try {
+          const payload = (await import("./lib/jwt")).verifyRefreshToken(token);
+          const user = await User.findById(payload.sub);
+          if (user) {
+            user.refreshTokenHash = null;
+            await user.save();
+          }
+        } catch (e) { /* ignore */ }
+      }
+      res.clearCookie("refresh_token");
+      if (req.session) req.session.destroy(() => {});
+      return res.redirect('/');
+    } catch (err) {
+      console.error("Logout GET error:", err);
+      res.status(500).json({ message: "Logout failed" });
+    }
+  });
+
   app.get("/api/projects", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;

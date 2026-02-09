@@ -177,10 +177,61 @@ async function main() {
 
         // Parse the HTML of the final page to extract Open Graph / Twitter meta images
         const html = await initialResp.text();
+
+        // Try to extract image from any JSON-LD blocks first (Pinterest often embeds metadata there)
+        try {
+          const ldRegex = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+          let match;
+          while ((match = ldRegex.exec(html)) !== null) {
+            try {
+              const parsed = JSON.parse(match[1]);
+              // Look for common image fields
+              const candidate = parsed?.image || parsed?.images_orig?.url || parsed?.imageLargeUrl || parsed?.image_spec || null;
+              if (typeof candidate === 'string' && candidate) {
+                res.setHeader("Content-Type", "application/json");
+                return res.json({ thumbnail_url: candidate, source: "json-ld" });
+              }
+              // Some LD blocks have nested sharedContent or @graph arrays
+              if (parsed && typeof parsed === 'object') {
+                const maybeImage = (function findImage(obj: any): string | null {
+                  if (!obj || typeof obj !== 'object') return null;
+                  if (typeof obj.image === 'string') return obj.image;
+                  if (obj.images_orig && typeof obj.images_orig.url === 'string') return obj.images_orig.url;
+                  if (obj.imageLargeUrl && typeof obj.imageLargeUrl === 'string') return obj.imageLargeUrl;
+                  for (const k of Object.keys(obj)) {
+                    try {
+                      const v = obj[k];
+                      const found = findImage(v);
+                      if (found) return found;
+                    } catch (e) { /* ignore */ }
+                  }
+                  return null;
+                })(parsed);
+                if (maybeImage) {
+                  res.setHeader("Content-Type", "application/json");
+                  return res.json({ thumbnail_url: maybeImage, source: "json-ld-nested" });
+                }
+              }
+            } catch (e) {
+              // ignore malformed JSON-LD
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        // Fallback: meta og/twitter image
         const m = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/i);
         if (m && m[1]) {
           res.setHeader("Content-Type", "application/json");
           return res.json({ thumbnail_url: m[1], source: "og" });
+        }
+
+        // Also try to find common Pinterest JSON snippet with images_orig
+        const imagesOrig = html.match(/"images_orig"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)"/i);
+        if (imagesOrig && imagesOrig[1]) {
+          res.setHeader("Content-Type", "application/json");
+          return res.json({ thumbnail_url: imagesOrig[1], source: "images_orig" });
         }
 
         // As a last resort return the HTML so the client can attempt to extract data

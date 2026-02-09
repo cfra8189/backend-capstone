@@ -1412,37 +1412,6 @@ async function main() {
     }
   });
 
-  app.get("/api/auth/verify", async (req: any, res) => {
-    try {
-      const { token } = req.query;
-
-      if (!token) {
-        return res.status(400).json({ message: "Token is required" });
-      }
-
-      const user = await User.findById(req.user?.claims?.sub);
-      if (!user) {
-        return res.status(401).json({ message: "Invalid token" });
-      }
-
-      res.json({
-        id: user._id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        profileImageUrl: user.profileImageUrl,
-        role: user.role,
-        businessName: user.businessName,
-        displayName: user.displayName,
-        boxCode: user.boxCode,
-        authType: user.authType
-      });
-    } catch (error) {
-      console.error("Auth verify error:", error);
-      res.status(500).json({ message: "Failed to verify token" });
-    }
-  });
-
   app.get("/api/auth/user", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;

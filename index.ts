@@ -30,58 +30,59 @@ import { CommunityComment } from "./shared/models/mongoose/CommunityComment";
 import { BlogPost } from "./shared/models/mongoose/BlogPost";
 import { StudioArtist } from "./shared/models/mongoose/StudioArtist";
 import { PressKit } from "./shared/models/mongoose/PressKit";
+import { EmbedCache } from "./shared/models/mongoose/EmbedCache";
 import { sendVerificationEmail } from "./lib/email";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-  app.use(express.json());
-  let mongoConnected = false;
-  let googleConfigured = false;
-  let passportEnabled = false;
+app.use(express.json());
+let mongoConnected = false;
+let googleConfigured = false;
+let passportEnabled = false;
 
-  // For local development (when PLATFORM_ID / ISSUER_URL are not set)
-  // provide a lightweight session and passport initialization so
-  // OAuth flows like Google OAuth still work.
-  if (!process.env.PLATFORM_ID && !process.env.ISSUER_URL) {
-    app.use(session({
-      secret: process.env.SESSION_SECRET || "dev-box-session",
-      resave: false,
-      saveUninitialized: false,
-      cookie: { secure: false },
-    }));
-    app.use(cookieParser());
-    app.use(passport.initialize());
-    app.use(passport.session());
-    
-    // Configure Passport serialization for sessions
-    passport.serializeUser((user: any, done) => {
-      done(null, user._id || user);
-    });
-    
-    passport.deserializeUser(async (id: any, done) => {
-      try {
-        // Handle both string IDs and session objects
-        const userId = typeof id === 'string' ? id : id?.claims?.sub;
-        if (!userId) {
-          return done(new Error('Invalid user ID'), null);
-        }
-        const user = await User.findById(userId);
-        done(null, user);
-      } catch (err) {
-        done(err, null);
+// For local development (when PLATFORM_ID / ISSUER_URL are not set)
+// provide a lightweight session and passport initialization so
+// OAuth flows like Google OAuth still work.
+if (!process.env.PLATFORM_ID && !process.env.ISSUER_URL) {
+  app.use(session({
+    secret: process.env.SESSION_SECRET || "dev-box-session",
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: false },
+  }));
+  app.use(cookieParser());
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  // Configure Passport serialization for sessions
+  passport.serializeUser((user: any, done) => {
+    done(null, user._id || user);
+  });
+
+  passport.deserializeUser(async (id: any, done) => {
+    try {
+      // Handle both string IDs and session objects
+      const userId = typeof id === 'string' ? id : id?.claims?.sub;
+      if (!userId) {
+        return done(new Error('Invalid user ID'), null);
       }
-    });
-    // Normalize req.user so routes can use req.user.claims.sub (Mongoose doc has _id, not claims)
-    app.use((req: any, _res, next) => {
-      if (req.user && req.user._id && !req.user.claims) {
-        req.user.claims = { sub: req.user._id.toString() };
-      }
-      next();
-    });
-    passportEnabled = true;
-  }
+      const user = await User.findById(userId);
+      done(null, user);
+    } catch (err) {
+      done(err, null);
+    }
+  });
+  // Normalize req.user so routes can use req.user.claims.sub (Mongoose doc has _id, not claims)
+  app.use((req: any, _res, next) => {
+    if (req.user && req.user._id && !req.user.claims) {
+      req.user.claims = { sub: req.user._id.toString() };
+    }
+    next();
+  });
+  passportEnabled = true;
+}
 
 function toId(doc: any) {
   if (!doc) return doc;
@@ -129,7 +130,7 @@ function renderVerificationPage(success: boolean, message: string): string {
 async function main() {
   await connectMongoDB();
   mongoConnected = true;
-  
+
   app.get("/api/debug/info", (req, res) => {
     res.json({
       hostname: req.hostname,
@@ -153,102 +154,99 @@ async function main() {
       if (!target) return res.status(400).json({ message: "Missing url parameter" });
       const originalUrl = String(target);
 
-      // First fetch the provided URL to follow redirects and learn the final destination
+      // 1. Check Cache
+      const cached = await EmbedCache.findOne({ url: originalUrl });
+      if (cached && cached.expiresAt > new Date()) {
+        res.setHeader("Content-Type", "application/json");
+        return res.json(cached.data);
+      }
+
+      // 2. Fetch Fresh Data
+      let responseData: any = null;
+      let provider = "unknown";
+
       const initialResp = await fetch(originalUrl, { headers: { "User-Agent": "TheBox/1.0" }, redirect: "follow" });
       const finalUrl = initialResp.url || originalUrl;
       const initialContentType = initialResp.headers.get("content-type") || "";
 
-      // Provider-specific handling: Pinterest short links (pin.it) often redirect to a canonical
-      // /pin/<id>/ page and the widgets oEmbed endpoint expects that canonical URL.
       if (/\b(pin\.it|pinterest)\b/i.test(finalUrl)) {
+        provider = "pinterest";
         try {
           const pinterestOembed = `https://widgets.pinterest.com/oembed.json/?url=${encodeURIComponent(finalUrl)}`;
           const oeResp = await fetch(pinterestOembed, { headers: { "User-Agent": "TheBox/1.0" } });
           const oeContentType = oeResp.headers.get("content-type") || "";
           if (oeResp.ok && oeContentType.includes("application/json")) {
-            const data = await oeResp.json();
-            res.setHeader("Content-Type", "application/json");
-            return res.json(data);
+            responseData = await oeResp.json();
           }
-          // If the Pinterest oEmbed endpoint didn't return usable JSON, fall through to HTML parsing
-        } catch (e) {
-          // ignore and fallback to HTML parsing
-        }
+        } catch (e) { /* ignore */ }
 
-        // Parse the HTML of the final page to extract Open Graph / Twitter meta images
-        const html = await initialResp.text();
-
-        // Try to extract image from any JSON-LD blocks first (Pinterest often embeds metadata there)
-        try {
+        if (!responseData) {
+          const html = await initialResp.text();
+          // Extract from JSON-LD or meta tags (existing logic)
           const ldRegex = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
           let match;
           while ((match = ldRegex.exec(html)) !== null) {
             try {
               const parsed = JSON.parse(match[1]);
-              // Look for common image fields
-              const candidate = parsed?.image || parsed?.images_orig?.url || parsed?.imageLargeUrl || parsed?.image_spec || null;
-              if (typeof candidate === 'string' && candidate) {
-                res.setHeader("Content-Type", "application/json");
-                return res.json({ thumbnail_url: candidate, source: "json-ld" });
-              }
-              // Some LD blocks have nested sharedContent or @graph arrays
-              if (parsed && typeof parsed === 'object') {
-                const maybeImage = (function findImage(obj: any): string | null {
-                  if (!obj || typeof obj !== 'object') return null;
-                  if (typeof obj.image === 'string') return obj.image;
-                  if (obj.images_orig && typeof obj.images_orig.url === 'string') return obj.images_orig.url;
-                  if (obj.imageLargeUrl && typeof obj.imageLargeUrl === 'string') return obj.imageLargeUrl;
-                  for (const k of Object.keys(obj)) {
-                    try {
-                      const v = obj[k];
-                      const found = findImage(v);
-                      if (found) return found;
-                    } catch (e) { /* ignore */ }
-                  }
-                  return null;
-                })(parsed);
-                if (maybeImage) {
-                  res.setHeader("Content-Type", "application/json");
-                  return res.json({ thumbnail_url: maybeImage, source: "json-ld-nested" });
+              const maybeImage = (function findImage(obj: any): string | null {
+                if (!obj || typeof obj !== 'object') return null;
+                if (typeof obj.image === 'string') return obj.image;
+                if (obj.images_orig && typeof obj.images_orig.url === 'string') return obj.images_orig.url;
+                if (obj.imageLargeUrl && typeof obj.imageLargeUrl === 'string') return obj.imageLargeUrl;
+                for (const k of Object.keys(obj)) {
+                  try {
+                    const found = findImage(obj[k]);
+                    if (found) return found;
+                  } catch (e) { /* ignore */ }
                 }
+                return null;
+              })(parsed);
+              if (maybeImage) {
+                responseData = { thumbnail_url: maybeImage, source: "json-ld" };
+                break;
               }
-            } catch (e) {
-              // ignore malformed JSON-LD
+            } catch (e) { /* ignore */ }
+          }
+
+          if (!responseData) {
+            const m = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/i);
+            if (m && m[1]) {
+              responseData = { thumbnail_url: m[1], source: "og" };
             }
           }
-        } catch (e) {
-          // ignore
         }
-
-        // Fallback: meta og/twitter image
-        const m = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/i);
-        if (m && m[1]) {
-          res.setHeader("Content-Type", "application/json");
-          return res.json({ thumbnail_url: m[1], source: "og" });
+      } else {
+        // Default behavior for other providers
+        if (initialContentType.includes("application/json")) {
+          responseData = await initialResp.json();
+          provider = responseData.provider_name || "json";
+        } else {
+          const text = await initialResp.text();
+          responseData = { html: text, contentType: initialContentType };
         }
-
-        // Also try to find common Pinterest JSON snippet with images_orig
-        const imagesOrig = html.match(/"images_orig"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)"/i);
-        if (imagesOrig && imagesOrig[1]) {
-          res.setHeader("Content-Type", "application/json");
-          return res.json({ thumbnail_url: imagesOrig[1], source: "images_orig" });
-        }
-
-        // As a last resort return the HTML so the client can attempt to extract data
-        res.setHeader("Content-Type", "application/json");
-        return res.json({ html, contentType: initialContentType });
       }
 
-      // Default behavior for other providers: if JSON, return it, otherwise return HTML
-      if (initialContentType.includes("application/json")) {
-        const data = await initialResp.json();
-        res.setHeader("Content-Type", "application/json");
-        return res.json(data);
+      if (!responseData) {
+        return res.status(404).json({ message: "Failed to resolve embed data" });
       }
 
-      const text = await initialResp.text();
+      // 3. Save to Cache (expire in 7 days)
+      try {
+        await EmbedCache.findOneAndUpdate(
+          { url: originalUrl },
+          {
+            data: responseData,
+            provider,
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+          },
+          { upsert: true }
+        );
+      } catch (e) {
+        console.error("Cache save error:", e);
+      }
+
       res.setHeader("Content-Type", "application/json");
-      return res.json({ html: text, contentType: initialContentType });
+      return res.json(responseData);
     } catch (err) {
       console.error("oEmbed proxy error:", err);
       res.status(500).json({ message: "Failed to proxy oEmbed" });
@@ -267,7 +265,7 @@ async function main() {
   }
 
   // Configure Google OAuth if credentials are present (works in dev with local session above)
-    try {
+  try {
     // setupGoogleAuth will return early if GOOGLE_CLIENT_ID/SECRET are not set
     const { setupGoogleAuth } = await import("./auth/google");
     // We'll set up Google OAuth after we know the actual port
@@ -422,12 +420,12 @@ async function main() {
       const baseUrl = `${req.protocol}://${req.get("host")}`;
       await sendVerificationEmail(email, verificationToken, baseUrl);
 
-      res.json({ 
-        success: true, 
+      res.json({
+        success: true,
         needsVerification: true,
-        message: studioToJoin 
-          ? `Account created and joined ${studioToJoin.businessName || studioToJoin.displayName}'s network. Please check your email to verify.` 
-          : "Please check your email to verify your account" 
+        message: studioToJoin
+          ? `Account created and joined ${studioToJoin.businessName || studioToJoin.displayName}'s network. Please check your email to verify.`
+          : "Please check your email to verify your account"
       });
     } catch (error) {
       console.error("Registration error:", error);
@@ -444,7 +442,7 @@ async function main() {
       }
 
       const user = await User.findOne({ verificationToken: token as string });
-      
+
       if (!user) {
         return res.status(400).send(renderVerificationPage(false, "Invalid or expired verification link"));
       }
@@ -513,7 +511,7 @@ async function main() {
       }
 
       if (user.emailVerified !== true) {
-        return res.status(403).json({ 
+        return res.status(403).json({
           message: "Please verify your email before logging in",
           needsVerification: true,
           email: user.email
@@ -593,7 +591,7 @@ async function main() {
         } catch (e) { /* ignore */ }
       }
       res.clearCookie("refresh_token");
-      if (req.session) req.session.destroy(() => {});
+      if (req.session) req.session.destroy(() => { });
       res.json({ success: true });
     } catch (err) {
       console.error("Logout error:", err);
@@ -616,7 +614,7 @@ async function main() {
         } catch (e) { /* ignore */ }
       }
       res.clearCookie("refresh_token");
-      if (req.session) req.session.destroy(() => {});
+      if (req.session) req.session.destroy(() => { });
       return res.redirect('/');
     } catch (err) {
       console.error("Logout GET error:", err);
@@ -710,16 +708,18 @@ async function main() {
     try {
       const userId = req.user.claims.sub;
       const notes = await CreativeNote.find({ userId }).sort({ sortOrder: 1, createdAt: 1 });
-      res.json({ notes: notes.map(n => {
-        const obj = toId(n);
-        return {
-          ...obj,
-          is_pinned: !!n.isPinned,
-          tags: n.tags || [],
-          sort_order: n.sortOrder ?? 0,
-          media_url: Array.isArray(n.mediaUrls) && n.mediaUrls.length > 0 ? n.mediaUrls[0] : null
-        };
-      }) });
+      res.json({
+        notes: notes.map(n => {
+          const obj = toId(n);
+          return {
+            ...obj,
+            is_pinned: !!n.isPinned,
+            tags: n.tags || [],
+            sort_order: n.sortOrder ?? 0,
+            media_url: Array.isArray(n.mediaUrls) && n.mediaUrls.length > 0 ? n.mediaUrls[0] : null
+          };
+        })
+      });
     } catch (error) {
       console.error("Failed to fetch notes:", error);
       res.status(500).json({ message: "Failed to fetch notes" });
@@ -730,10 +730,10 @@ async function main() {
     try {
       const userId = req.user.claims.sub;
       const { category, content, media_url, tags } = req.body;
-      
+
       const maxNote = await CreativeNote.findOne({ userId }).sort({ sortOrder: -1 });
       const nextSortOrder = (maxNote?.sortOrder ?? -1) + 1;
-      
+
       const note = await CreativeNote.create({
         userId,
         category: category || "ideas",
@@ -819,7 +819,7 @@ async function main() {
 
       const userNotes = await CreativeNote.find({ userId }, '_id');
       const userNoteIds = new Set(userNotes.map(n => n._id.toString()));
-      
+
       for (const id of noteIds) {
         if (!userNoteIds.has(id.toString())) {
           return res.status(403).json({ message: "Unauthorized: Note does not belong to user" });
@@ -898,7 +898,7 @@ async function main() {
     try {
       const totalUsers = await User.countDocuments();
       const allProjects = await Project.find();
-      
+
       const projectsByStatus: Record<string, number> = {};
       allProjects.forEach(p => {
         projectsByStatus[p.status] = (projectsByStatus[p.status] || 0) + 1;
@@ -1006,7 +1006,7 @@ async function main() {
   app.get("/api/community", async (req, res) => {
     try {
       const approved = await SharedContent.find({ status: "approved" }).sort({ approvedAt: -1 }).populate('noteId');
-      
+
       const result = await Promise.all(approved.map(async (item) => {
         const note = item.noteId as any;
         const itemObj = toId(item);
@@ -1144,7 +1144,7 @@ async function main() {
     try {
       const { id } = req.params;
       const post = await BlogPost.findById(id);
-      
+
       if (!post) {
         return res.status(404).json({ message: "Blog post not found" });
       }
@@ -1166,13 +1166,13 @@ async function main() {
     try {
       const userId = req.user.claims.sub;
       const user = await User.findById(userId);
-      
+
       if (user?.role !== "studio") {
         return res.status(403).json({ message: "Studio access only" });
       }
 
       const relations = await StudioArtist.find({ studioId: userId });
-      
+
       const artistsWithInfo = await Promise.all(relations.map(async (rel) => {
         if (rel.artistId) {
           const artist = await User.findById(rel.artistId);
@@ -1220,7 +1220,7 @@ async function main() {
       }
 
       const existingArtist = await User.findOne({ email });
-      
+
       if (existingArtist) {
         const existingRelation = await StudioArtist.findOne({
           studioId: userId,
@@ -1409,7 +1409,7 @@ async function main() {
       const { invitationId } = req.params;
 
       const invitation = await StudioArtist.findById(invitationId);
-      
+
       if (!invitation) {
         return res.status(404).json({ message: "Invitation not found" });
       }
@@ -1514,13 +1514,13 @@ async function main() {
     try {
       const { boxCode } = req.params;
       const user = await User.findOne({ boxCode: boxCode.toUpperCase() });
-      
+
       if (!user) {
         return res.status(404).json({ message: "Artist not found" });
       }
 
       const epk = await PressKit.findOne({ userId: user._id });
-      
+
       if (!epk || !epk.isPublished) {
         return res.status(404).json({ message: "Press kit not found or not published" });
       }
@@ -1549,7 +1549,7 @@ async function main() {
     try {
       const userId = req.user.claims.sub;
       const user = await User.findById(userId);
-      
+
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
@@ -1606,7 +1606,7 @@ async function main() {
   server.listen(requestedPort ?? 0, "0.0.0.0", async () => {
     const addr: any = server.address();
     const actualPort = addr && addr.port ? addr.port : '(unknown)';
-    
+
     // Update frontend .env file with the actual backend port
     try {
       const frontendEnvPath = path.join(__dirname, '..', 'frontend', '.env');
@@ -1619,7 +1619,7 @@ VITE_BACKEND_URL=${backendUrl}
     } catch (err) {
       console.error("Failed to update frontend .env:", err);
     }
-    
+
     // Set up Google OAuth with actual port
     if (googleConfigured) {
       try {
@@ -1631,7 +1631,7 @@ VITE_BACKEND_URL=${backendUrl}
         googleConfigured = false;
       }
     }
-    
+
     const parts: string[] = [];
     if (mongoConnected) parts.push("MongoDB connected");
     if (passportEnabled) parts.push("Passport enabled");

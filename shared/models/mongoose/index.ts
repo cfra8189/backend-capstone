@@ -7,3 +7,4 @@ export { CommunityComment, type ICommunityComment } from "./CommunityComment";
 export { BlogPost, type IBlogPost } from "./BlogPost";
 export { StudioArtist, type IStudioArtist } from "./StudioArtist";
 export { PressKit } from "./PressKit";
+export { EmbedCache, type IEmbedCache } from "./EmbedCache";

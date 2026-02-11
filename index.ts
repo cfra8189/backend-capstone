@@ -1582,6 +1582,14 @@ async function main() {
   const publicDir = possiblePaths.find(p => fs.existsSync(path.join(p, "index.html")));
   if (publicDir) {
     app.use(express.static(publicDir, { maxAge: "1d" }));
+
+    // SPA Fallback: Serve index.html for any unknown non-API routes
+    app.get("*", (req: any, res: any) => {
+      if (req.path.startsWith("/api/")) {
+        return res.status(404).json({ message: "API endpoint not found" });
+      }
+      res.sendFile(path.join(publicDir, "index.html"));
+    });
   } else {
     console.log("No public directory found - serving API only");
   }

@@ -492,6 +492,26 @@ async function main() {
     }
   });
 
+  // Development helper: auto-verify a user's email (only enabled in non-production local dev)
+  if (process.env.NODE_ENV !== 'production' && !process.env.PLATFORM_ID) {
+    app.post('/api/auth/dev/verify', async (req: any, res) => {
+      try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ message: 'email is required' });
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: 'user not found' });
+        user.emailVerified = true;
+        user.verificationToken = null;
+        user.verificationTokenExpires = null;
+        await user.save();
+        return res.json({ success: true, message: 'User verified (dev)' });
+      } catch (err) {
+        console.error('Dev verify error:', err);
+        res.status(500).json({ message: 'failed' });
+      }
+    });
+  }
+
   app.post("/api/auth/login", async (req: any, res) => {
     try {
       const { email, password } = req.body;

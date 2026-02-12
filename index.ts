@@ -637,6 +637,13 @@ async function main() {
     try {
       const userId = req.user.claims.sub;
       const { title, type, status, description, metadata } = req.body;
+      
+      // Generate folder structure
+      const currentYear = new Date().getFullYear();
+      const rootFolder = `${currentYear}`;
+      const sanitizedTitle = title.replace(/[^a-zA-Z0-9\s]/g, '').trim().replace(/\s+/g, '_');
+      const folderPath = `${rootFolder}/${sanitizedTitle}`;
+      
       const project = await Project.create({
         userId,
         title,
@@ -644,6 +651,8 @@ async function main() {
         status: status || "concept",
         description,
         metadata: metadata || {},
+        folderPath,
+        rootFolder,
       });
       res.json({ project: toId(project) });
     } catch (error) {

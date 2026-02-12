@@ -1540,11 +1540,27 @@ async function main() {
     }
   });
 
+  // List documents with optional search + pagination
   app.get("/api/documents", isAuthenticated, async (req: any, res) => {
     try {
+      const { q, page = "1", limit = "20" } = req.query;
+      const pg = Math.max(1, parseInt(String(page) || "1"));
+      const lim = Math.max(1, Math.min(100, parseInt(String(limit) || "20")));
+      const skip = (pg - 1) * lim;
       const { StoredDocument } = await import("./shared/models/mongoose/Document");
-      const docs = await StoredDocument.find({ userId: req.user.claims.sub }).sort({ createdAt: -1 }).limit(50);
-      res.json(docs.map(toId));
+
+      const baseFilter: any = { userId: req.user.claims.sub };
+      if (q && String(q).trim()) {
+        const re = new RegExp(String(q).trim(), "i");
+        baseFilter.$or = [ { title: re }, { "metadata.formData.trackTitle": re }, { "metadata.formData.artistName": re } ];
+      }
+
+      const [docs, total] = await Promise.all([
+        StoredDocument.find(baseFilter).sort({ createdAt: -1 }).skip(skip).limit(lim),
+        StoredDocument.countDocuments(baseFilter)
+      ]);
+
+      res.json({ documents: docs.map(toId), total, page: pg, limit: lim });
     } catch (err) {
       console.error("List documents error:", err);
       res.status(500).json({ message: "Failed to list documents" });
@@ -1560,6 +1576,37 @@ async function main() {
     } catch (err) {
       console.error("Get document error:", err);
       res.status(500).json({ message: "Failed to get document" });
+    }
+  });
+
+  // Update (rename / update metadata)
+  app.put("/api/documents/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { title, metadata } = req.body;
+      const { StoredDocument } = await import("./shared/models/mongoose/Document");
+      const doc = await StoredDocument.findById(req.params.id);
+      if (!doc || doc.userId.toString() !== req.user.claims.sub) return res.status(404).json({ message: "Not found" });
+      if (title) doc.title = title;
+      if (metadata) doc.metadata = metadata;
+      await doc.save();
+      res.json({ success: true, document: toId(doc) });
+    } catch (err) {
+      console.error("Update document error:", err);
+      res.status(500).json({ message: "Failed to update document" });
+    }
+  });
+
+  // Delete document
+  app.delete("/api/documents/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { StoredDocument } = await import("./shared/models/mongoose/Document");
+      const doc = await StoredDocument.findById(req.params.id);
+      if (!doc || doc.userId.toString() !== req.user.claims.sub) return res.status(404).json({ message: "Not found" });
+      await StoredDocument.findByIdAndDelete(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Delete document error:", err);
+      res.status(500).json({ message: "Failed to delete document" });
     }
   });
 

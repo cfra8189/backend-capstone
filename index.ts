@@ -264,13 +264,15 @@ async function main() {
     await setupAuth(app);
     registerAuthRoutes(app);
     registerObjectStorageRoutes(app);
-    app.use("/api/folders", registerFolderRoutes);
     app.use("/api/collaborations", registerCollaborationRoutes);
     app.use("/api/profile", registerProfileRoutes);
     app.use("/api/projects", registerProjectMoveRoutes);
   } else {
     // Platform integrations disabled in local dev — no startup note added
   }
+
+  // Always register folder routes - they should work in all environments
+  app.use("/api/folders", registerFolderRoutes);
 
   // Configure Google OAuth if credentials are present (works in dev with local session above)
   try {

@@ -17,6 +17,7 @@ process.on("uncaughtException", (error: any) => {
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./integrations/auth";
 import { registerObjectStorageRoutes } from "./integrations/object_storage";
 import registerFolderRoutes from "./integrations/folders";
+import registerCollaborationRoutes from "./integrations/collaborations";
 import passport from "passport";
 import session from "express-session";
 import cookieParser from "cookie-parser";
@@ -262,6 +263,7 @@ async function main() {
     registerAuthRoutes(app);
     registerObjectStorageRoutes(app);
     app.use("/api/folders", registerFolderRoutes);
+    app.use("/api/collaborations", registerCollaborationRoutes);
   } else {
     // Platform integrations disabled in local dev — no startup note added
   }

@@ -9,3 +9,4 @@ export { StudioArtist, type IStudioArtist } from "./StudioArtist";
 export { PressKit } from "./PressKit";
 export { StoredDocument } from "./Document";
 export { EmbedCache, type IEmbedCache } from "./EmbedCache";
+export { Folder, type IFolder } from "./Folder";

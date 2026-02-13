@@ -10,6 +10,7 @@ export interface IProject extends Document {
   isFeatured: boolean;
   folderPath: string;
   rootFolder: string;
+  folderId?: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -24,6 +25,7 @@ const projectSchema = new Schema<IProject>({
   isFeatured: { type: Boolean, default: false },
   folderPath: { type: String, required: true },
   rootFolder: { type: String, required: true },
+  folderId: { type: Schema.Types.ObjectId, ref: "Folder", default: null },
 }, { timestamps: true });
 
 export const Project = mongoose.model<IProject>("Project", projectSchema);

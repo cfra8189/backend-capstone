@@ -18,6 +18,7 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./integrations/a
 import { registerObjectStorageRoutes } from "./integrations/object_storage";
 import registerFolderRoutes from "./integrations/folders";
 import registerCollaborationRoutes from "./integrations/collaborations";
+import registerProfileRoutes from "./integrations/profile";
 import passport from "passport";
 import session from "express-session";
 import cookieParser from "cookie-parser";
@@ -264,6 +265,7 @@ async function main() {
     registerObjectStorageRoutes(app);
     app.use("/api/folders", registerFolderRoutes);
     app.use("/api/collaborations", registerCollaborationRoutes);
+    app.use("/api/profile", registerProfileRoutes);
   } else {
     // Platform integrations disabled in local dev — no startup note added
   }

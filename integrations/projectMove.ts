@@ -22,7 +22,8 @@ router.put("/:id/move", isAuthenticated, async (req: any, res) => {
     }
 
     // Update project's folder
-    project.folderId = folderId;
+    // If folderId is 'root', set to null (remove from folder)
+    project.folderId = folderId === 'root' ? null : folderId;
     await project.save();
 
     res.json({ message: "Project moved successfully", project });

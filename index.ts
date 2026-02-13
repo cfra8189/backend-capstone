@@ -661,7 +661,16 @@ async function main() {
   app.get("/api/projects", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const userProjects = await Project.find({ userId }).sort({ createdAt: -1 });
+      const { folderId } = req.query;
+
+      const query: any = { userId };
+      if (folderId === 'root') {
+        query.folderId = null;
+      } else if (folderId) {
+        query.folderId = folderId;
+      }
+
+      const userProjects = await Project.find(query).sort({ createdAt: -1 });
       res.json({ projects: userProjects.map(toId) });
     } catch (error) {
       console.error("Failed to fetch projects:", error);

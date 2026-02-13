@@ -273,6 +273,7 @@ async function main() {
 
   // Always register folder routes - they should work in all environments
   app.use("/api/folders", registerFolderRoutes);
+  app.use("/api/projects", registerProjectMoveRoutes);
 
   // Configure Google OAuth if credentials are present (works in dev with local session above)
   try {
@@ -666,14 +667,14 @@ async function main() {
   app.post("/api/projects", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const { title, type, status, description, metadata } = req.body;
-      
+      const { title, type, status, description, metadata, folderId } = req.body;
+
       // Generate folder structure
       const currentYear = new Date().getFullYear();
       const rootFolder = `${currentYear}`;
       const sanitizedTitle = title.replace(/[^a-zA-Z0-9\s]/g, '').trim().replace(/\s+/g, '_');
       const folderPath = `${rootFolder}/${sanitizedTitle}`;
-      
+
       const project = await Project.create({
         userId,
         title,
@@ -683,6 +684,7 @@ async function main() {
         metadata: metadata || {},
         folderPath,
         rootFolder,
+        folderId: folderId || null,
       });
       res.json({ project: toId(project) });
     } catch (error) {
@@ -1582,7 +1584,7 @@ async function main() {
       const baseFilter: any = { userId: req.user.claims.sub };
       if (q && String(q).trim()) {
         const re = new RegExp(String(q).trim(), "i");
-        baseFilter.$or = [ { title: re }, { "metadata.formData.trackTitle": re }, { "metadata.formData.artistName": re } ];
+        baseFilter.$or = [{ title: re }, { "metadata.formData.trackTitle": re }, { "metadata.formData.artistName": re }];
       }
 
       const [docs, total] = await Promise.all([

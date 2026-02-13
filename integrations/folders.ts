@@ -1,13 +1,14 @@
 import express from "express";
-import { Folder, IFolder } from "../shared/models";
 import { isAuthenticated } from "./auth";
+import { Folder, IFolder } from "../shared/models/mongoose";
+import { Project } from "../shared/models/mongoose";
 
 const router = express.Router();
 
 // Get all folders for a user
-router.get("/", isAuthenticated, async (req, res) => {
+router.get("/", isAuthenticated, async (req: any, res) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user?.claims?.sub || req.user?.id;
     const folders = await Folder.find({ userId })
       .populate('parentId', 'name path')
       .sort({ path: 1 });
@@ -20,16 +21,16 @@ router.get("/", isAuthenticated, async (req, res) => {
 });
 
 // Get folder tree structure
-router.get("/tree", isAuthenticated, async (req, res) => {
+router.get("/tree", isAuthenticated, async (req: any, res) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user?.claims?.sub || req.user?.id;
     const folders = await Folder.find({ userId })
       .populate('parentId', 'name path')
       .sort({ path: 1 });
     
     // Build tree structure
     const folderMap = new Map();
-    const rootFolders = [];
+    const rootFolders: IFolder[] = [];
     
     folders.forEach(folder => {
       folderMap.set(folder._id.toString(), { ...folder.toObject(), children: [] });
@@ -55,9 +56,9 @@ router.get("/tree", isAuthenticated, async (req, res) => {
 });
 
 // Create a new folder
-router.post("/", isAuthenticated, async (req, res) => {
+router.post("/", isAuthenticated, async (req: any, res) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user?.claims?.sub || req.user?.id;
     const { name, parentId, type, year } = req.body;
     
     // Validate input
@@ -105,9 +106,9 @@ router.post("/", isAuthenticated, async (req, res) => {
 });
 
 // Auto-create year folder if it doesn't exist
-router.post("/ensure-year", isAuthenticated, async (req, res) => {
+router.post("/ensure-year", isAuthenticated, async (req: any, res) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user?.claims?.sub || req.user?.id;
     const currentYear = new Date().getFullYear();
     
     // Check if year folder already exists
@@ -118,14 +119,14 @@ router.post("/ensure-year", isAuthenticated, async (req, res) => {
     });
     
     if (!yearFolder) {
-      // Create root folder if it doesn't exist
-      let rootFolder = await Folder.findOne({ 
-        userId, 
-        type: 'root', 
-        parentId: null 
-      });
+      // Find all root folders (no parentId)
+      const allRootFolders = await Folder.find({ userId, parentId: null }).sort({ name: 1 });
       
-      if (!rootFolder) {
+      let rootFolder: IFolder | null = null;
+      if (allRootFolders.length > 0) {
+        rootFolder = allRootFolders[0];
+      } else {
+        // Create root folder if it doesn't exist
         rootFolder = new Folder({
           name: 'Root',
           path: 'Root',
@@ -139,8 +140,8 @@ router.post("/ensure-year", isAuthenticated, async (req, res) => {
       // Create year folder
       yearFolder = new Folder({
         name: currentYear.toString(),
-        path: `Root/${currentYear}`,
-        parentId: rootFolder._id,
+        path: `${rootFolder.path}/${currentYear}`,
+        parentId: rootFolder._id.toString(),
         userId,
         type: 'year',
         year: currentYear
@@ -157,10 +158,10 @@ router.post("/ensure-year", isAuthenticated, async (req, res) => {
   }
 });
 
-// Update folder
-router.put("/:id", isAuthenticated, async (req, res) => {
+// Update a folder
+router.put("/:id", isAuthenticated, async (req: any, res) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user?.claims?.sub || req.user?.id;
     const { id } = req.params;
     const { name } = req.body;
     
@@ -180,9 +181,14 @@ router.put("/:id", isAuthenticated, async (req, res) => {
     
     // Update path for folder and children
     const oldPath = folder.path;
-    const newPath = folder.parentId 
-      ? `${folder.parentId.path}/${name}` 
-      : name;
+    let newPath = name;
+    
+    if (folder.parentId) {
+      const parentFolder = await Folder.findById(folder.parentId);
+      if (parentFolder) {
+        newPath = `${parentFolder.path}/${name}`;
+      }
+    }
     
     folder.name = name;
     folder.path = newPath;
@@ -202,10 +208,10 @@ router.put("/:id", isAuthenticated, async (req, res) => {
   }
 });
 
-// Delete folder
-router.delete("/:id", isAuthenticated, async (req, res) => {
+// Delete a folder
+router.delete("/:id", isAuthenticated, async (req: any, res) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user?.claims?.sub || req.user?.id;
     const { id } = req.params;
     
     const folder = await Folder.findOne({ _id: id, userId });
@@ -219,7 +225,6 @@ router.delete("/:id", isAuthenticated, async (req, res) => {
     }
     
     // Check if folder has projects
-    const { Project } = await import("../shared/models");
     const projectsInFolder = await Project.countDocuments({ 
       userId, 
       folderId: id 

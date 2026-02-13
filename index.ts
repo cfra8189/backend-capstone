@@ -19,6 +19,7 @@ import { registerObjectStorageRoutes } from "./integrations/object_storage";
 import registerFolderRoutes from "./integrations/folders";
 import registerCollaborationRoutes from "./integrations/collaborations";
 import registerProfileRoutes from "./integrations/profile";
+import registerProjectMoveRoutes from "./integrations/projectMove";
 import passport from "passport";
 import session from "express-session";
 import cookieParser from "cookie-parser";
@@ -266,6 +267,7 @@ async function main() {
     app.use("/api/folders", registerFolderRoutes);
     app.use("/api/collaborations", registerCollaborationRoutes);
     app.use("/api/profile", registerProfileRoutes);
+    app.use("/api/projects", registerProjectMoveRoutes);
   } else {
     // Platform integrations disabled in local dev — no startup note added
   }

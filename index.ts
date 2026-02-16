@@ -39,6 +39,7 @@ import { PressKit } from "./shared/models/mongoose/PressKit";
 import { EmbedCache } from "./shared/models/mongoose/EmbedCache";
 import authRoutes from "./routes/auth";
 import projectRoutes from "./routes/projects";
+import trackReviewRoutes from "./routes/track_review";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,6 +106,9 @@ function toId(doc: any) {
 async function main() {
   await connectMongoDB();
   mongoConnected = true;
+
+  // Mount track review routes
+  app.use(trackReviewRoutes);
 
   app.get("/api/debug/info", (req, res) => {
     res.json({

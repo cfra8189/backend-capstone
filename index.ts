@@ -183,6 +183,10 @@ async function main() {
           const oeContentType = oeResp.headers.get("content-type") || "";
           if (oeResp.ok && oeContentType.includes("application/json")) {
             responseData = await oeResp.json();
+            // Enhance the HTML for Pinterest's widget script if it's missing the data-pin-do
+            if (responseData.html && !responseData.html.includes('data-pin-do')) {
+              responseData.html = responseData.html.replace('<a ', '<a data-pin-do="embedPin" ');
+            }
           }
         } catch (e) { /* ignore */ }
 
@@ -208,7 +212,11 @@ async function main() {
                 return null;
               })(parsed);
               if (maybeImage) {
-                responseData = { thumbnail_url: maybeImage, source: "json-ld" };
+                responseData = {
+                  thumbnail_url: maybeImage,
+                  source: "json-ld",
+                  html: `<a data-pin-do="embedPin" href="${finalUrl}"></a>`
+                };
                 break;
               }
             } catch (e) { /* ignore */ }
@@ -217,11 +225,16 @@ async function main() {
           if (!responseData) {
             const m = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/i);
             if (m && m[1]) {
-              responseData = { thumbnail_url: m[1], source: "og" };
+              responseData = {
+                thumbnail_url: m[1],
+                source: "og",
+                html: `<a data-pin-do="embedPin" href="${finalUrl}"></a>`
+              };
             }
           }
         }
-      } else {
+      }
+      else {
         // Default behavior for other providers
         if (initialContentType.includes("application/json")) {
           responseData = await initialResp.json();

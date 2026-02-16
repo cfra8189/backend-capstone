@@ -2,37 +2,27 @@ import express from "express";
 import fs from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
+import { Project } from "../shared/models/mongoose/Project";
 
 const router = express.Router();
 
 // Get list of folders for a project
 router.get("/api/folders", async (req, res) => {
     try {
-        const projectsDir = path.join(process.cwd(), "projects");
+        console.log("[Track Review] Loading folders...");
 
-        // For now, return all top-level folders
-        // In a real implementation, this would filter by user/project
-        const folders: any[] = [];
+        // Get all projects from MongoDB
+        const projects = await Project.find({}).select('name _id').lean();
 
-        try {
-            const entries = await fs.readdir(projectsDir, { withFileTypes: true });
-            for (const entry of entries) {
-                if (entry.isDirectory()) {
-                    folders.push({
-                        id: entry.name,
-                        name: entry.name,
-                        path: path.join(projectsDir, entry.name)
-                    });
-                }
-            }
-        } catch (error) {
-            // Projects directory doesn't exist yet
-            console.log("Projects directory not found, returning empty folders list");
-        }
+        const folders = projects.map((project: any) => ({
+            id: project._id.toString(),
+            name: project.name || "Untitled Project"
+        }));
 
+        console.log(`[Track Review] Found ${folders.length} folders`);
         res.json({ folders });
     } catch (error) {
-        console.error("Error loading folders:", error);
+        console.error("[Track Review] Error loading folders:", error);
         res.status(500).json({ error: "Failed to load folders" });
     }
 });
@@ -180,21 +170,26 @@ router.get("/api/track-review/:reviewId/export", async (req, res) => {
         }
         exportText += `\n`;
 
-        // Structure markers
+        // Structure markers with section lyrics
         if (reviewData.structureMarkers && reviewData.structureMarkers.length > 0) {
-            exportText += `SONG STRUCTURE:\n`;
+            exportText += `SONG STRUCTURE & LYRICS:\n`;
             exportText += `${"-".repeat(50)}\n`;
             reviewData.structureMarkers
                 .sort((a: any, b: any) => a.timestamp - b.timestamp)
                 .forEach((marker: any) => {
-                    exportText += `${formatTime(marker.timestamp)} - ${marker.label}\n`;
+                    exportText += `\n[${formatTime(marker.timestamp)}] ${marker.label.toUpperCase()}\n`;
+                    if (marker.lyrics && marker.lyrics.trim()) {
+                        exportText += `${marker.lyrics}\n`;
+                    } else {
+                        exportText += `(No lyrics written for this section)\n`;
+                    }
                 });
             exportText += `\n`;
         }
 
-        // Lyrics
-        if (reviewData.lyrics) {
-            exportText += `LYRICS:\n`;
+        // Legacy lyrics field (for backward compatibility)
+        if (reviewData.lyrics && reviewData.lyrics.trim()) {
+            exportText += `ADDITIONAL LYRICS:\n`;
             exportText += `${"-".repeat(50)}\n`;
             exportText += `${reviewData.lyrics}\n\n`;
         }

@@ -1,18 +1,20 @@
 import express from "express";
-import fs from "fs/promises";
-import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { Folder } from "../shared/models/mongoose";
+import { Project } from "../shared/models/mongoose";
+import { TrackReview } from "../shared/models/mongoose/TrackReview";
+import isAuthenticated from "./auth";
 
 const router = express.Router();
 
-// Get list of folders for a project
-router.get("/api/folders", async (req, res) => {
+// Get list of folders for a project (Already using MongoDB)
+router.get("/api/folders", isAuthenticated, async (req: any, res) => {
     try {
-        console.log("[Track Review] Loading folders...");
+        const userId = req.user?.claims?.sub || req.user?.id;
+        console.log("[Track Review] Loading folders for user:", userId);
 
         // Get all folders from MongoDB, sorted by path
-        const foldersList = await Folder.find({}).sort({ path: 1 }).lean();
+        const foldersList = await Folder.find({ userId }).sort({ path: 1 }).lean();
 
         const folders = foldersList.map((folder: any) => ({
             id: folder._id.toString(),
@@ -29,43 +31,23 @@ router.get("/api/folders", async (req, res) => {
 });
 
 // Load a track review by ID
-router.get("/api/track-review/:reviewId", async (req, res) => {
+router.get("/api/track-review/:reviewId", isAuthenticated, async (req: any, res) => {
     try {
+        const userId = req.user?.claims?.sub || req.user?.id;
         const { reviewId } = req.params;
-        const projectsDir = path.join(process.cwd(), "projects");
 
-        // Search for the review file in all folders
-        let reviewData = null;
-        let foundPath = "";
+        // Try to find by MongoDB _id
+        let review = null;
+        try {
+            review = await TrackReview.findOne({ _id: reviewId, userId });
+        } catch (e) {
+            // If ID is not a valid ObjectId, it might be a legacy file-based ID
+            // We'll skip this catch block to handle it below if we were supporting legacy migration on read
+            // But for now, user asked to switch to MERN, so we look in DB.
+        }
 
-        const searchInDir = async (dir: string): Promise<boolean> => {
-            try {
-                const entries = await fs.readdir(dir, { withFileTypes: true });
-
-                for (const entry of entries) {
-                    const fullPath = path.join(dir, entry.name);
-
-                    if (entry.isDirectory()) {
-                        if (await searchInDir(fullPath)) {
-                            return true;
-                        }
-                    } else if (entry.name === `${reviewId}.json`) {
-                        const content = await fs.readFile(fullPath, "utf-8");
-                        reviewData = JSON.parse(content);
-                        foundPath = fullPath;
-                        return true;
-                    }
-                }
-            } catch (error) {
-                // Ignore errors for inaccessible directories
-            }
-            return false;
-        };
-
-        await searchInDir(projectsDir);
-
-        if (reviewData) {
-            res.json(reviewData);
+        if (review) {
+            res.json(review);
         } else {
             res.status(404).json({ error: "Review not found" });
         }
@@ -76,36 +58,94 @@ router.get("/api/track-review/:reviewId", async (req, res) => {
 });
 
 // Save a track review
-router.post("/api/track-review", async (req, res) => {
+router.post("/api/track-review", isAuthenticated, async (req: any, res) => {
     try {
+        const userId = req.user?.claims?.sub || req.user?.id;
         const reviewData = req.body;
-        const { folderId } = reviewData;
+        const { folderId, trackName, key, bpm, audioUrl, lyrics, structureMarkers, comments } = reviewData;
+
+        let reviewId = reviewData.reviewId; // This might be an ObjectId string if editing
 
         if (!folderId) {
             return res.status(400).json({ error: "Folder ID is required" });
         }
 
-        const projectsDir = path.join(process.cwd(), "projects");
-        const folderPath = path.join(projectsDir, folderId);
+        let trackReview;
 
-        // Ensure folder exists
-        await fs.mkdir(folderPath, { recursive: true });
+        if (reviewId) {
+            // Try to update existing review
+            trackReview = await TrackReview.findOne({ _id: reviewId, userId });
+        }
 
-        // Generate review ID if not provided
-        const reviewId = reviewData.reviewId || uuidv4();
-        const fileName = `${reviewId}.json`;
-        const filePath = path.join(folderPath, fileName);
+        if (trackReview) {
+            // Update existing
+            trackReview.trackName = trackName;
+            trackReview.key = key;
+            trackReview.bpm = bpm;
+            trackReview.audioUrl = audioUrl;
+            trackReview.lyrics = lyrics;
+            trackReview.structureMarkers = structureMarkers;
+            trackReview.comments = comments;
+            trackReview.folderId = folderId;
+            await trackReview.save();
+        } else {
+            // Create new
+            trackReview = new TrackReview({
+                userId,
+                trackName: trackName || "Untitled Review",
+                key,
+                bpm,
+                audioUrl,
+                lyrics,
+                structureMarkers,
+                comments,
+                folderId
+            });
+            await trackReview.save();
+            reviewId = trackReview._id.toString();
+        }
 
-        // Add reviewId to data
-        const dataToSave = {
-            ...reviewData,
-            reviewId,
-            lastModified: new Date().toISOString()
-        };
+        // Sync with Project System
+        try {
+            // Check if project already exists for this review
+            // We search by metadata.reviewId which stores the MongoDB _id of the review
+            let project = await Project.findOne({
+                userId,
+                "metadata.reviewId": reviewId
+            });
 
-        await fs.writeFile(filePath, JSON.stringify(dataToSave, null, 2), "utf-8");
+            const folder = await Folder.findById(folderId);
 
-        res.json({ success: true, reviewId, filePath });
+            if (project) {
+                // Update existing project
+                project.title = trackName || "Untitled Review";
+                project.folderId = folderId;
+                project.folderPath = folder?.path || "Unknown";
+                project.updatedAt = new Date();
+                await project.save();
+            } else {
+                // Create new project
+                project = new Project({
+                    userId,
+                    title: trackName || "Untitled Review",
+                    type: "track_review",
+                    status: "planning", // Default status for reviews
+                    folderId,
+                    folderPath: folder?.path || "Unknown",
+                    rootFolder: folder?.path?.split('/')[0] || "Unknown",
+                    metadata: {
+                        reviewId: reviewId, // Link to TrackReview document
+                        type: 'track_review_db'
+                    }
+                });
+                await project.save();
+            }
+            console.log("[Track Review] Synced project:", project._id);
+        } catch (dbError) {
+            console.error("[Track Review] Failed to sync project to DB:", dbError);
+        }
+
+        res.json({ success: true, reviewId, trackReview });
     } catch (error) {
         console.error("Error saving review:", error);
         res.status(500).json({ error: "Failed to save review" });
@@ -113,38 +153,12 @@ router.post("/api/track-review", async (req, res) => {
 });
 
 // Export a track review as text
-router.get("/api/track-review/:reviewId/export", async (req, res) => {
+router.get("/api/track-review/:reviewId/export", isAuthenticated, async (req: any, res) => {
     try {
+        const userId = req.user?.claims?.sub || req.user?.id;
         const { reviewId } = req.params;
-        const projectsDir = path.join(process.cwd(), "projects");
 
-        // Search for the review file
-        let reviewData: any = null;
-
-        const searchInDir = async (dir: string): Promise<boolean> => {
-            try {
-                const entries = await fs.readdir(dir, { withFileTypes: true });
-
-                for (const entry of entries) {
-                    const fullPath = path.join(dir, entry.name);
-
-                    if (entry.isDirectory()) {
-                        if (await searchInDir(fullPath)) {
-                            return true;
-                        }
-                    } else if (entry.name === `${reviewId}.json`) {
-                        const content = await fs.readFile(fullPath, "utf-8");
-                        reviewData = JSON.parse(content);
-                        return true;
-                    }
-                }
-            } catch (error) {
-                // Ignore errors
-            }
-            return false;
-        };
-
-        await searchInDir(projectsDir);
+        const reviewData = await TrackReview.findOne({ _id: reviewId, userId });
 
         if (!reviewData) {
             return res.status(404).json({ error: "Review not found" });
@@ -207,7 +221,7 @@ router.get("/api/track-review/:reviewId/export", async (req, res) => {
             exportText += `\n`;
         }
 
-        exportText += `\nLast Modified: ${new Date(reviewData.lastModified).toLocaleString()}\n`;
+        exportText += `\nLast Modified: ${new Date((reviewData as any).updatedAt).toLocaleString()}\n`;
 
         res.setHeader("Content-Type", "text/plain");
         res.setHeader("Content-Disposition", `attachment; filename="${reviewData.trackName || "track-review"}.txt"`);

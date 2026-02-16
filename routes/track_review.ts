@@ -2,7 +2,7 @@ import express from "express";
 import fs from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
-import { Project } from "../shared/models/mongoose/Project";
+import { Folder } from "../shared/models/mongoose";
 
 const router = express.Router();
 
@@ -11,12 +11,13 @@ router.get("/api/folders", async (req, res) => {
     try {
         console.log("[Track Review] Loading folders...");
 
-        // Get all projects from MongoDB
-        const projects = await Project.find({}).select('name _id').lean();
+        // Get all folders from MongoDB, sorted by path
+        const foldersList = await Folder.find({}).sort({ path: 1 }).lean();
 
-        const folders = projects.map((project: any) => ({
-            id: project._id.toString(),
-            name: project.name || "Untitled Project"
+        const folders = foldersList.map((folder: any) => ({
+            id: folder._id.toString(),
+            name: folder.name,
+            path: folder.path
         }));
 
         console.log(`[Track Review] Found ${folders.length} folders`);

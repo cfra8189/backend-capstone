@@ -106,6 +106,21 @@ async function main() {
   await connectMongoDB();
   mongoConnected = true;
 
+  // Add Content Security Policy
+  app.use((req, res, next) => {
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://assets.pinterest.com https://*.pinterest.com https://vercel.live; " +
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+      "font-src 'self' https://fonts.gstatic.com data:; " +
+      "img-src 'self' data: https: blob:; " +
+      "connect-src 'self' https://s3.amazonaws.com https://*.amazonaws.com https://vercel.live wss://vercel.live; " +
+      "frame-src 'self' https://assets.pinterest.com https://*.pinterest.com https://www.youtube.com https://youtube.com https://player.vimeo.com https://open.spotify.com https://w.soundcloud.com https://platform.twitter.com https://x.com;"
+    );
+    next();
+  });
+
   app.get("/api/debug/info", (req, res) => {
     res.json({
       hostname: req.hostname,

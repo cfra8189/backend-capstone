@@ -37,7 +37,8 @@ import { BlogPost } from "./shared/models/mongoose/BlogPost";
 import { StudioArtist } from "./shared/models/mongoose/StudioArtist";
 import { PressKit } from "./shared/models/mongoose/PressKit";
 import { EmbedCache } from "./shared/models/mongoose/EmbedCache";
-import { sendVerificationEmail } from "./lib/email";
+import authRoutes from "./routes/auth";
+import projectRoutes from "./routes/projects";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -99,39 +100,7 @@ function toId(doc: any) {
   return obj;
 }
 
-function renderVerificationPage(success: boolean, message: string): string {
-  const color = success ? "#c3f53c" : "#ef4444";
-  const icon = success ? "✓" : "✗";
-  return `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Email Verification - The Box</title>
-      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-      <style>
-        * { font-family: 'JetBrains Mono', monospace; }
-        body { background: #0a0a0a; color: #fff; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-        .container { text-align: center; max-width: 400px; padding: 40px; }
-        .icon { width: 80px; height: 80px; border-radius: 50%; background: ${color}; color: #000; font-size: 40px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; }
-        h1 { color: ${color}; margin-bottom: 10px; }
-        p { color: #999; margin-bottom: 30px; }
-        a { display: inline-block; background: ${color}; color: #000; font-weight: bold; padding: 15px 40px; text-decoration: none; border-radius: 8px; }
-        a:hover { opacity: 0.9; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="icon">${icon}</div>
-        <h1>${success ? "Success!" : "Error"}</h1>
-        <p>${message}</p>
-        <a href="/">Go to The Box</a>
-      </div>
-    </body>
-    </html>
-  `;
-}
+// Verification page helper moved to lib/emailTemplates.ts
 
 async function main() {
   await connectMongoDB();
@@ -171,15 +140,22 @@ async function main() {
       let responseData: any = null;
       let provider = "unknown";
 
-      const initialResp = await fetch(originalUrl, { headers: { "User-Agent": "TheBox/1.0" }, redirect: "follow" });
+      // Use a standard browser User-Agent to avoid being blocked by sites like Giphy/Pinterest
+      const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
+
+      const initialResp = await fetch(originalUrl, { headers: { "User-Agent": userAgent }, redirect: "follow" });
       const finalUrl = initialResp.url || originalUrl;
-      const initialContentType = initialResp.headers.get("content-type") || "";
+      const initialContentType = (initialResp.headers.get("content-type") || "").toLowerCase();
+
+      // Fallback: Check file extension if content-type is generic or missing
+      const isImageExt = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(finalUrl.split('?')[0]);
+      const isVideoExt = /\.(mp4|webm|ogg|mov)$/i.test(finalUrl.split('?')[0]);
 
       if (/\b(pin\.it|pinterest)\b/i.test(finalUrl)) {
         provider = "pinterest";
         try {
           const pinterestOembed = `https://widgets.pinterest.com/oembed.json/?url=${encodeURIComponent(finalUrl)}`;
-          const oeResp = await fetch(pinterestOembed, { headers: { "User-Agent": "TheBox/1.0" } });
+          const oeResp = await fetch(pinterestOembed, { headers: { "User-Agent": userAgent } });
           const oeContentType = oeResp.headers.get("content-type") || "";
           if (oeResp.ok && oeContentType.includes("application/json")) {
             responseData = await oeResp.json();
@@ -235,14 +211,14 @@ async function main() {
         }
       } else {
         // Handle images/videos directly
-        if (initialContentType.startsWith("image/")) {
+        if (initialContentType.startsWith("image/") || isImageExt) {
           responseData = {
             thumbnail_url: finalUrl,
             type: "image",
             provider_name: "Image"
           };
           provider = "image";
-        } else if (initialContentType.startsWith("video/")) {
+        } else if (initialContentType.startsWith("video/") || isVideoExt) {
           responseData = {
             html: `<video src="${finalUrl}" controls class="w-full rounded-lg"></video>`,
             type: "video",
@@ -253,8 +229,19 @@ async function main() {
           responseData = await initialResp.json();
           provider = responseData.provider_name || "json";
         } else {
+          // If it's HTML, it might still have Open Graph tags we can use
           const text = await initialResp.text();
-          responseData = { html: text, contentType: initialContentType };
+          // Try to find og:image or twitter:image
+          const m = text.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/i);
+          if (m && m[1]) {
+            responseData = {
+              thumbnail_url: m[1],
+              type: 'link',
+              provider_name: 'OpenGraph'
+            };
+          } else {
+            responseData = { html: text, contentType: initialContentType };
+          }
         }
       }
 
@@ -316,474 +303,9 @@ async function main() {
     console.error("Failed to configure Google OAuth:", err);
   }
 
-  app.post("/api/auth/change-password", isAuthenticated, async (req: any, res) => {
-    try {
-      const { currentPassword, newPassword } = req.body;
-      const userId = req.user.claims.sub;
+  app.use("/api/auth", authRoutes);
 
-      if (!userId) {
-        return res.status(401).json({ message: "Not authenticated" });
-      }
-
-      if (!currentPassword || !newPassword) {
-        return res.status(400).json({ message: "Current and new password are required" });
-      }
-
-      if (newPassword.length < 6) {
-        return res.status(400).json({ message: "New password must be at least 6 characters" });
-      }
-
-      const user = await User.findById(userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      if (!user.passwordHash) {
-        return res.status(400).json({ message: "Account uses OAuth login - password cannot be changed" });
-      }
-
-      const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
-      if (!isValid) {
-        return res.status(400).json({ message: "Current password is incorrect" });
-      }
-
-      const newPasswordHash = await bcrypt.hash(newPassword, 10);
-      await User.findByIdAndUpdate(userId, { passwordHash: newPasswordHash });
-
-      res.json({ success: true, message: "Password changed successfully" });
-    } catch (error) {
-      console.error("Password change error:", error);
-      res.status(500).json({ message: "Failed to change password" });
-    }
-  });
-
-  app.post("/api/auth/update-profile", isAuthenticated, async (req: any, res) => {
-    try {
-      const { displayName } = req.body;
-      const userId = req.user.claims.sub;
-
-      if (!userId) {
-        return res.status(401).json({ message: "Not authenticated" });
-      }
-
-      await User.findByIdAndUpdate(userId, {
-        displayName: displayName || null,
-        firstName: displayName || null,
-        updatedAt: new Date()
-      });
-
-      res.json({ success: true, message: "Profile updated successfully" });
-    } catch (error) {
-      console.error("Profile update error:", error);
-      res.status(500).json({ message: "Failed to update profile" });
-    }
-  });
-
-  async function generateUniqueBoxCode(): Promise<string> {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let attempts = 0;
-    while (attempts < 10) {
-      let code = "BOX-";
-      for (let i = 0; i < 6; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      const existing = await User.findOne({ boxCode: code });
-      if (!existing) {
-        return code;
-      }
-      attempts++;
-    }
-    return "BOX-" + crypto.randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
-  }
-
-  app.post("/api/auth/register", async (req: any, res) => {
-    try {
-      const { email, password, displayName, firstName, lastName, role, businessName, studioCode } = req.body;
-
-      if (!email || !password) {
-        return res.status(400).json({ message: "Email and password are required" });
-      }
-
-      if (!displayName) {
-        return res.status(400).json({ message: "Name is required" });
-      }
-
-      if (role === "studio" && !businessName) {
-        return res.status(400).json({ message: "Business name is required for studios" });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({ message: "Password must be at least 6 characters" });
-      }
-
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
-        return res.status(400).json({ message: "Email already registered" });
-      }
-
-      let studioToJoin: any = null;
-      if (studioCode && role === "artist") {
-        const studio = await User.findOne({ boxCode: studioCode.toUpperCase() });
-        if (!studio || studio.role !== "studio") {
-          return res.status(400).json({ message: "Invalid studio code" });
-        }
-        studioToJoin = studio;
-      }
-
-      const passwordHash = await bcrypt.hash(password, 10);
-      const verificationToken = crypto.randomBytes(32).toString("hex");
-      const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      const boxCode = await generateUniqueBoxCode();
-
-      const user = await User.create({
-        email,
-        passwordHash,
-        displayName,
-        firstName: firstName || null,
-        lastName: lastName || null,
-        role: role || "artist",
-        businessName: role === "studio" ? businessName : null,
-        boxCode,
-        emailVerified: false,
-        verificationToken,
-        verificationTokenExpires,
-      });
-
-      if (studioToJoin && user) {
-        await StudioArtist.create({
-          studioId: studioToJoin._id,
-          artistId: user._id,
-          inviteEmail: email,
-          status: "accepted",
-          acceptedAt: new Date(),
-        });
-      }
-
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      await sendVerificationEmail(email, verificationToken, baseUrl);
-
-      res.json({
-        success: true,
-        needsVerification: true,
-        message: studioToJoin
-          ? `Account created and joined ${studioToJoin.businessName || studioToJoin.displayName}'s network. Please check your email to verify.`
-          : "Please check your email to verify your account"
-      });
-    } catch (error) {
-      console.error("Registration error:", error);
-      res.status(500).json({ message: "Registration failed" });
-    }
-  });
-
-  app.get("/api/auth/verify", async (req: any, res) => {
-    try {
-      const { token } = req.query;
-
-      if (!token) {
-        return res.status(400).send(renderVerificationPage(false, "Invalid verification link"));
-      }
-
-      const user = await User.findOne({ verificationToken: token as string });
-
-      if (!user) {
-        return res.status(400).send(renderVerificationPage(false, "Invalid or expired verification link"));
-      }
-
-      if (user.verificationTokenExpires && new Date() > user.verificationTokenExpires) {
-        return res.status(400).send(renderVerificationPage(false, "Verification link has expired"));
-      }
-
-      await User.findByIdAndUpdate(user._id, {
-        emailVerified: true,
-        verificationToken: null,
-        verificationTokenExpires: null,
-      });
-
-      res.send(renderVerificationPage(true, "Your email has been verified!"));
-    } catch (error) {
-      console.error("Verification error:", error?.message || String(error));
-      res.status(500).send(renderVerificationPage(false, "Verification failed"));
-    }
-  });
-
-  app.post("/api/auth/resend-verification", async (req: any, res) => {
-    try {
-      const { email } = req.body;
-
-      const user = await User.findOne({ email });
-      if (!user) {
-        return res.json({ success: true });
-      }
-
-      if (user.emailVerified === true) {
-        return res.json({ success: true, message: "Email already verified" });
-      }
-
-      const verificationToken = crypto.randomBytes(32).toString("hex");
-      const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
-      await User.findByIdAndUpdate(user._id, { verificationToken, verificationTokenExpires });
-
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      await sendVerificationEmail(email, verificationToken, baseUrl);
-
-      res.json({ success: true, message: "Verification email sent" });
-    } catch (error) {
-      console.error("Resend verification error:", error);
-      res.status(500).json({ message: "Failed to resend verification email" });
-    }
-  });
-
-  // Development helper: auto-verify a user's email (only enabled in non-production local dev)
-  if (process.env.NODE_ENV !== 'production' && !process.env.PLATFORM_ID) {
-    app.post('/api/auth/dev/verify', async (req: any, res) => {
-      try {
-        const { email } = req.body;
-        if (!email) return res.status(400).json({ message: 'email is required' });
-        const user = await User.findOne({ email });
-        if (!user) return res.status(404).json({ message: 'user not found' });
-        user.emailVerified = true;
-        user.verificationToken = null;
-        user.verificationTokenExpires = null;
-        await user.save();
-        return res.json({ success: true, message: 'User verified (dev)' });
-      } catch (err) {
-        console.error('Dev verify error:', err);
-        res.status(500).json({ message: 'failed' });
-      }
-    });
-  }
-
-  app.post("/api/auth/login", async (req: any, res) => {
-    try {
-      const { email, password } = req.body;
-
-      if (!email || !password) {
-        return res.status(400).json({ message: "Email and password are required" });
-      }
-
-      const user = await User.findOne({ email });
-      if (!user || !user.passwordHash) {
-        return res.status(401).json({ message: "Invalid email or password" });
-      }
-
-      const isValid = await bcrypt.compare(password, user.passwordHash);
-      if (!isValid) {
-        return res.status(401).json({ message: "Invalid email or password" });
-      }
-
-      if (user.emailVerified !== true) {
-        return res.status(403).json({
-          message: "Please verify your email before logging in",
-          needsVerification: true,
-          email: user.email
-        });
-      }
-
-      const expiresAt = Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60);
-      req.session.passport = {
-        user: {
-          claims: { sub: user._id.toString() },
-          expires_at: expiresAt,
-        }
-      };
-      // Issue minimal JWT refresh token and set cookie
-      try {
-        const { signRefreshToken } = await import("./lib/jwt");
-        const bcrypt = (await import("bcryptjs")).default;
-        const tid = (await import("crypto")).randomBytes(16).toString("hex");
-        const refreshToken = signRefreshToken(user._id.toString(), tid);
-        const hash = await bcrypt.hash(refreshToken, 10);
-        user.refreshTokenHash = hash;
-        await user.save();
-        res.cookie("refresh_token", refreshToken, { httpOnly: true, secure: false, sameSite: "lax", maxAge: 30 * 24 * 60 * 60 * 1000 });
-      } catch (err) {
-        console.error("Failed to create refresh token:", err);
-      }
-
-      console.log("Login successful for:", email, "session set");
-      res.json({ success: true, user: { id: user._id.toString(), email: user.email, firstName: user.firstName, lastName: user.lastName } });
-    } catch (error) {
-      console.error("Login error:", error);
-      res.status(500).json({ message: "Login failed" });
-    }
-  });
-
-  // Minimal JWT refresh endpoint
-  app.post("/api/auth/refresh", async (req: any, res) => {
-    try {
-      const token = req.cookies?.refresh_token;
-      if (!token) return res.status(401).json({ message: "No refresh token" });
-      const { verifyRefreshToken, signAccessToken, signRefreshToken } = await import("./lib/jwt");
-      const bcrypt = (await import("bcryptjs")).default;
-      let payload;
-      try { payload = verifyRefreshToken(token); } catch (e) { return res.status(401).json({ message: "Invalid refresh token" }); }
-      const user = await User.findById(payload.sub);
-      if (!user || !user.refreshTokenHash) return res.status(401).json({ message: "Invalid refresh token" });
-      const match = await bcrypt.compare(token, user.refreshTokenHash);
-      if (!match) return res.status(401).json({ message: "Refresh token mismatch" });
-
-      // rotate refresh token
-      const tid = (await import("crypto")).randomBytes(16).toString("hex");
-      const newRefresh = signRefreshToken(user._id.toString(), tid);
-      const newHash = await bcrypt.hash(newRefresh, 10);
-      user.refreshTokenHash = newHash;
-      await user.save();
-      res.cookie("refresh_token", newRefresh, { httpOnly: true, secure: false, sameSite: "lax", maxAge: 30 * 24 * 60 * 60 * 1000 });
-
-      const access = signAccessToken(user._id.toString());
-      res.json({ accessToken: access });
-    } catch (err) {
-      console.error("Refresh error:", err);
-      res.status(500).json({ message: "Failed to refresh token" });
-    }
-  });
-
-  app.post("/api/auth/logout", async (req: any, res) => {
-    try {
-      const token = req.cookies?.refresh_token;
-      if (token) {
-        try {
-          const payload = (await import("./lib/jwt")).verifyRefreshToken(token);
-          const user = await User.findById(payload.sub);
-          if (user) {
-            user.refreshTokenHash = null;
-            await user.save();
-          }
-        } catch (e) { /* ignore */ }
-      }
-      res.clearCookie("refresh_token");
-      if (req.session) req.session.destroy(() => { });
-      res.json({ success: true });
-    } catch (err) {
-      console.error("Logout error:", err);
-      res.status(500).json({ message: "Logout failed" });
-    }
-  });
-
-  // Browser GET fallback for `/api/logout` (some frontend anchors use GET)
-  app.get("/api/logout", async (req: any, res) => {
-    try {
-      const token = req.cookies?.refresh_token;
-      if (token) {
-        try {
-          const payload = (await import("./lib/jwt")).verifyRefreshToken(token);
-          const user = await User.findById(payload.sub);
-          if (user) {
-            user.refreshTokenHash = null;
-            await user.save();
-          }
-        } catch (e) { /* ignore */ }
-      }
-      res.clearCookie("refresh_token");
-      if (req.session) req.session.destroy(() => { });
-      return res.redirect('/');
-    } catch (err) {
-      console.error("Logout GET error:", err);
-      res.status(500).json({ message: "Logout failed" });
-    }
-  });
-
-  app.get("/api/projects", isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const { folderId } = req.query;
-
-      const query: any = { userId };
-      if (folderId === 'root') {
-        query.folderId = null;
-      } else if (folderId) {
-        query.folderId = folderId;
-      }
-
-      const userProjects = await Project.find(query).sort({ createdAt: -1 });
-      res.json({ projects: userProjects.map(toId) });
-    } catch (error) {
-      console.error("Failed to fetch projects:", error);
-      res.status(500).json({ message: "Failed to fetch projects" });
-    }
-  });
-
-  app.post("/api/projects", isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const { title, type, status, description, metadata, folderId } = req.body;
-
-      // Generate folder structure
-      const currentYear = new Date().getFullYear();
-      const rootFolder = `${currentYear}`;
-      const sanitizedTitle = title.replace(/[^a-zA-Z0-9\s]/g, '').trim().replace(/\s+/g, '_');
-      const folderPath = `${rootFolder}/${sanitizedTitle}`;
-
-      const project = await Project.create({
-        userId,
-        title,
-        type: type || "single",
-        status: status || "concept",
-        description,
-        metadata: metadata || {},
-        folderPath,
-        rootFolder,
-        folderId: folderId || null,
-      });
-      res.json({ project: toId(project) });
-    } catch (error) {
-      console.error("Failed to create project:", error);
-      res.status(500).json({ message: "Failed to create project" });
-    }
-  });
-
-  app.get("/api/projects/:id", isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const project = await Project.findById(req.params.id);
-      if (!project || project.userId.toString() !== userId) {
-        return res.status(404).json({ message: "Project not found" });
-      }
-      res.json({ project: toId(project) });
-    } catch (error) {
-      console.error("Failed to fetch project:", error);
-      res.status(500).json({ message: "Failed to fetch project" });
-    }
-  });
-
-  app.put("/api/projects/:id", isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const existing = await Project.findById(req.params.id);
-      if (!existing || existing.userId.toString() !== userId) {
-        return res.status(404).json({ message: "Project not found" });
-      }
-      const { title, type, status, description, metadata } = req.body;
-      const project = await Project.findByIdAndUpdate(req.params.id, {
-        title: title || existing.title,
-        type: type || existing.type,
-        status: status || existing.status,
-        description: description !== undefined ? description : existing.description,
-        metadata: metadata || existing.metadata,
-        updatedAt: new Date(),
-      }, { new: true });
-      res.json({ project: toId(project) });
-    } catch (error) {
-      console.error("Failed to update project:", error);
-      res.status(500).json({ message: "Failed to update project" });
-    }
-  });
-
-  app.delete("/api/projects/:id", isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const existing = await Project.findById(req.params.id);
-      if (!existing || existing.userId.toString() !== userId) {
-        return res.status(404).json({ message: "Project not found" });
-      }
-      await Project.findByIdAndDelete(req.params.id);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Failed to delete project:", error);
-      res.status(500).json({ message: "Failed to delete project" });
-    }
-  });
+  app.use("/api/projects", projectRoutes);
 
   app.get("/api/creative/notes", isAuthenticated, async (req: any, res) => {
     try {

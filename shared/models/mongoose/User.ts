@@ -16,6 +16,8 @@ export interface IUser extends Document {
   verificationTokenExpires: Date | null;
   githubId: string | null;
   googleId: string | null;
+  refreshTokenHash: string | null;
+  authType?: string;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -233,10 +233,23 @@ async function main() {
             }
           }
         }
-      }
-      else {
-        // Default behavior for other providers
-        if (initialContentType.includes("application/json")) {
+      } else {
+        // Handle images/videos directly
+        if (initialContentType.startsWith("image/")) {
+          responseData = {
+            thumbnail_url: finalUrl,
+            type: "image",
+            provider_name: "Image"
+          };
+          provider = "image";
+        } else if (initialContentType.startsWith("video/")) {
+          responseData = {
+            html: `<video src="${finalUrl}" controls class="w-full rounded-lg"></video>`,
+            type: "video",
+            provider_name: "Video"
+          };
+          provider = "video";
+        } else if (initialContentType.includes("application/json")) {
           responseData = await initialResp.json();
           provider = responseData.provider_name || "json";
         } else {

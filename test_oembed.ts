@@ -1,53 +1,41 @@
 
-// global fetch is available in Node 18+
+async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-async function testUrl(url: string, userAgent: string) {
-    console.log(`\n--- Testing URL: ${url} ---`);
-    console.log(`Using User-Agent: ${userAgent}`);
+async function main() {
+    console.log("STARTING TEST...");
+    const browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
+    const url = "https://www.pinterest.com/pin/844495367610860662/";
+
     try {
-        const initialResp = await fetch(url, { headers: { "User-Agent": userAgent }, redirect: "follow" });
+        console.log(`Fetching ${url}...`);
+        const res = await fetch(url, { headers: { "User-Agent": browserUA } });
+        console.log(`Main Page Status: ${res.status}`);
+        const html = await res.text();
+        console.log(`HTML Length: ${html.length}`);
 
-        console.log(`Status: ${initialResp.status}`);
-        const contentType = initialResp.headers.get("content-type");
-        console.log(`Content-Type: ${contentType}`);
+        const oembedUrl = `https://widgets.pinterest.com/oembed.json/?url=${encodeURIComponent(url)}`;
+        console.log(`Fetching oEmbed ${oembedUrl}...`);
+        const oe = await fetch(oembedUrl, { headers: { "User-Agent": browserUA } });
+        console.log(`oEmbed Status: ${oe.status}`);
 
-        if (contentType?.startsWith("image/")) {
-            console.log("-> Detected as IMAGE");
-        } else if (contentType?.startsWith("video/")) {
-            console.log("-> Detected as VIDEO");
+        if (oe.ok) {
+            const json = await oe.json();
+            console.log("OEMBED JSON FOUND:");
+            console.log(JSON.stringify(json).substring(0, 500)); // Print first 500 chars
         } else {
-            console.log("-> Detected as HTML/Other");
-            if (url.includes("pinterest") || url.includes("pin.it")) {
-                console.log("   (Checking Pinterest logic...)");
-                // ... mock simple check
+            console.log("oEmbed FAILED. Checking META tags in HTML...");
+            const m = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/i);
+            if (m) {
+                console.log(`META IMAGE FOUND: ${m[1]}`);
             } else {
-                const text = await initialResp.text();
-                console.log(`   Preview of body: ${text.substring(0, 100)}...`);
+                console.log("NO META IMAGE FOUND.");
             }
         }
 
     } catch (e: any) {
-        console.error("Error:", e.message);
+        console.error("CRASH:", e.message);
     }
-}
-
-async function main() {
-    const customUA = "TheBox/1.0";
-    const browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
-
-    const testUrls = [
-        "https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png",
-        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExYT.../giphy.gif" // need real url
-    ];
-
-    // Real URL for testing
-    const realGif = "https://media.giphy.com/media/xT4uQulxzV39haRFjG/giphy.gif";
-
-    console.log("\n=== TEST 1: Custom UA ===");
-    await testUrl(realGif, customUA);
-
-    console.log("\n=== TEST 2: Browser UA ===");
-    await testUrl(realGif, browserUA);
+    console.log("TEST COMPLETE");
 }
 
 main();

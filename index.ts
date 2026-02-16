@@ -191,7 +191,8 @@ async function main() {
                 responseData = {
                   thumbnail_url: maybeImage,
                   source: "json-ld",
-                  html: `<a data-pin-do="embedPin" href="${finalUrl}"></a>`
+                  type: "image",
+                  provider_name: "Pinterest"
                 };
                 break;
               }
@@ -204,7 +205,8 @@ async function main() {
               responseData = {
                 thumbnail_url: m[1],
                 source: "og",
-                html: `<a data-pin-do="embedPin" href="${finalUrl}"></a>`
+                type: "image",
+                provider_name: "Pinterest"
               };
             }
           }

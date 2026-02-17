@@ -178,24 +178,42 @@ async function main() {
           while ((match = ldRegex.exec(html)) !== null) {
             try {
               const parsed = JSON.parse(match[1]);
-              const maybeImage = (function findImage(obj: any): string | null {
-                if (!obj || typeof obj !== 'object') return null;
-                if (typeof obj.image === 'string') return obj.image;
-                if (obj.images_orig && typeof obj.images_orig.url === 'string') return obj.images_orig.url;
-                if (obj.imageLargeUrl && typeof obj.imageLargeUrl === 'string') return obj.imageLargeUrl;
+
+              // Helper to find image and video
+              const extracted = (function findMedia(obj: any): { image: string | null, video: string | null } {
+                if (!obj || typeof obj !== 'object') return { image: null, video: null };
+
+                let image = null;
+                let video = null;
+
+                if (typeof obj.image === 'string') image = obj.image;
+                if (obj.images_orig && typeof obj.images_orig.url === 'string') image = obj.images_orig.url;
+                if (obj.imageLargeUrl && typeof obj.imageLargeUrl === 'string') image = obj.imageLargeUrl;
+
+                if (typeof obj.contentUrl === 'string' && /\.(mp4|webm|mov)$/i.test(obj.contentUrl)) video = obj.contentUrl;
+                if (typeof obj.video === 'string' && /\.(mp4|webm|mov)$/i.test(obj.video)) video = obj.video;
+                if (obj.video && typeof obj.video.contentUrl === 'string') video = obj.video.contentUrl;
+
+                if (image || video) return { image, video };
+
                 for (const k of Object.keys(obj)) {
                   try {
-                    const found = findImage(obj[k]);
-                    if (found) return found;
+                    const found = findMedia(obj[k]);
+                    if (found.image && !image) image = found.image;
+                    if (found.video && !video) video = found.video;
+                    if (image && video) return { image, video };
                   } catch (e) { /* ignore */ }
                 }
-                return null;
+                return { image, video };
               })(parsed);
-              if (maybeImage) {
+
+              if (extracted.image || extracted.video) {
                 responseData = {
-                  thumbnail_url: maybeImage,
+                  thumbnail_url: extracted.image || undefined,
+                  video_url: extracted.video || undefined,
+                  html: extracted.video ? `<video src="${extracted.video}" controls autoplay loop muted playsinline class="w-full rounded-lg"></video>` : undefined,
                   source: "json-ld",
-                  type: "image",
+                  type: extracted.video ? "video" : "image",
                   provider_name: "Pinterest"
                 };
                 break;
@@ -204,12 +222,17 @@ async function main() {
           }
 
           if (!responseData) {
-            const m = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/i);
-            if (m && m[1]) {
+            const imgMatch = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']/i);
+            const vidMatch = html.match(/<meta[^>]+(?:property|name)=["'](?:og:video:secure_url|og:video|twitter:player:stream)["'][^>]*content=["']([^"']+)["']/i);
+
+            if (imgMatch && imgMatch[1]) {
+              const vidUrl = vidMatch ? vidMatch[1] : undefined;
               responseData = {
-                thumbnail_url: m[1],
+                thumbnail_url: imgMatch[1],
+                video_url: vidUrl,
+                html: vidUrl ? `<video src="${vidUrl}" controls autoplay loop muted playsinline class="w-full rounded-lg"></video>` : undefined,
                 source: "og",
-                type: "image",
+                type: vidUrl ? "video" : "image",
                 provider_name: "Pinterest"
               };
             }

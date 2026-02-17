@@ -10,6 +10,8 @@ export interface ICreativeNote extends Document {
   isPinned: boolean;
   sortOrder: number;
   folderId: number | null;
+
+  date: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -24,6 +26,7 @@ const creativeNoteSchema = new Schema<ICreativeNote>({
   isPinned: { type: Boolean, default: false },
   sortOrder: { type: Number, default: 0 },
   folderId: { type: Number, default: null },
+  date: { type: Date, default: Date.now },
 }, { timestamps: true });
 
 export const CreativeNote = mongoose.model<ICreativeNote>("CreativeNote", creativeNoteSchema);

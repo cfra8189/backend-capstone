@@ -341,7 +341,20 @@ async function main() {
   app.get("/api/creative/notes", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const notes = await CreativeNote.find({ userId }).sort({ sortOrder: 1, createdAt: 1 });
+      const { date, limit } = req.query;
+      const query: any = { userId };
+      if (date) {
+        const start = new Date(date);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(date);
+        end.setHours(23, 59, 59, 999);
+        query.date = { $gte: start, $lte: end };
+      }
+      let queryBuilder = CreativeNote.find(query).sort({ date: -1, sortOrder: 1, createdAt: -1 });
+      if (limit) {
+        queryBuilder = queryBuilder.limit(parseInt(limit as string));
+      }
+      const notes = await queryBuilder;
       res.json({
         notes: notes.map(n => {
           const obj = toId(n);
@@ -364,7 +377,7 @@ async function main() {
   app.post("/api/creative/notes", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const { category, content, media_url, tags, folder_id } = req.body;
+      const { category, content, media_url, tags, folder_id, date } = req.body;
 
       const maxNote = await CreativeNote.findOne({ userId }).sort({ sortOrder: -1 });
       const nextSortOrder = (maxNote?.sortOrder ?? -1) + 1;
@@ -377,9 +390,10 @@ async function main() {
         tags: tags || [],
         sortOrder: nextSortOrder,
         folderId: folder_id ?? null,
+        date: date ? new Date(date) : new Date(),
       });
       const obj = toId(note);
-      res.json({ note: { ...obj, is_pinned: false, tags: note.tags || [], media_url: media_url || null, sort_order: note.sortOrder, folder_id: note.folderId ?? null } });
+      res.json({ note: { ...obj, is_pinned: false, tags: note.tags || [], media_url: media_url || null, sort_order: note.sortOrder, folder_id: note.folderId ?? null, date: note.date } });
     } catch (error) {
       console.error("Failed to create note:", error);
       res.status(500).json({ message: "Failed to create note" });
@@ -393,7 +407,7 @@ async function main() {
       if (!existing || existing.userId.toString() !== userId) {
         return res.status(404).json({ message: "Note not found" });
       }
-      const { category, content, media_url, tags, folder_id } = req.body;
+      const { category, content, media_url, tags, folder_id, date } = req.body;
       const existingUrls = Array.isArray(existing.mediaUrls) ? existing.mediaUrls : [];
       const updateData: any = {
         category: category || existing.category,
@@ -402,6 +416,7 @@ async function main() {
         tags: tags || existing.tags,
         updatedAt: new Date(),
       };
+      if (date) updateData.date = new Date(date);
       if (folder_id !== undefined) updateData.folderId = folder_id;
       const note = await CreativeNote.findByIdAndUpdate(req.params.id, updateData, { new: true });
       const obj = toId(note);

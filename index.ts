@@ -339,6 +339,34 @@ async function main() {
 
   app.use("/api/auth", authRoutes);
 
+  // Universal Logout Route (Fallback for both GET links and POST hook calls)
+  app.all("/api/logout", (req: any, res) => {
+    const handleLogout = () => {
+      if (req.session) {
+        req.session.destroy(() => {
+          res.clearCookie("connect.sid");
+          res.clearCookie("refresh_token");
+          if (req.method === "GET") {
+            res.redirect("/");
+          } else {
+            res.json({ success: true });
+          }
+        });
+      } else {
+        res.clearCookie("refresh_token");
+        res.clearCookie("connect.sid");
+        if (req.method === "GET") res.redirect("/");
+        else res.json({ success: true });
+      }
+    };
+
+    if (typeof req.logout === 'function') {
+      req.logout(handleLogout);
+    } else {
+      handleLogout();
+    }
+  });
+
   app.use("/api/projects", projectRoutes);
   app.use("/api/calendar", calendarRoutes);
 

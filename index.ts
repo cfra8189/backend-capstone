@@ -325,6 +325,7 @@ async function main() {
             is_pinned: !!n.isPinned,
             tags: n.tags || [],
             sort_order: n.sortOrder ?? 0,
+            folder_id: n.folderId ?? null,
             media_url: Array.isArray(n.mediaUrls) && n.mediaUrls.length > 0 ? n.mediaUrls[0] : null
           };
         })
@@ -338,7 +339,7 @@ async function main() {
   app.post("/api/creative/notes", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const { category, content, media_url, tags } = req.body;
+      const { category, content, media_url, tags, folder_id } = req.body;
 
       const maxNote = await CreativeNote.findOne({ userId }).sort({ sortOrder: -1 });
       const nextSortOrder = (maxNote?.sortOrder ?? -1) + 1;
@@ -350,9 +351,10 @@ async function main() {
         mediaUrls: media_url ? [media_url] : [],
         tags: tags || [],
         sortOrder: nextSortOrder,
+        folderId: folder_id ?? null,
       });
       const obj = toId(note);
-      res.json({ note: { ...obj, is_pinned: false, tags: note.tags || [], media_url: media_url || null, sort_order: note.sortOrder } });
+      res.json({ note: { ...obj, is_pinned: false, tags: note.tags || [], media_url: media_url || null, sort_order: note.sortOrder, folder_id: note.folderId ?? null } });
     } catch (error) {
       console.error("Failed to create note:", error);
       res.status(500).json({ message: "Failed to create note" });
@@ -366,18 +368,20 @@ async function main() {
       if (!existing || existing.userId.toString() !== userId) {
         return res.status(404).json({ message: "Note not found" });
       }
-      const { category, content, media_url, tags } = req.body;
+      const { category, content, media_url, tags, folder_id } = req.body;
       const existingUrls = Array.isArray(existing.mediaUrls) ? existing.mediaUrls : [];
-      const note = await CreativeNote.findByIdAndUpdate(req.params.id, {
+      const updateData: any = {
         category: category || existing.category,
         content: content || existing.content,
         mediaUrls: media_url !== undefined ? (media_url ? [media_url] : []) : existingUrls,
         tags: tags || existing.tags,
         updatedAt: new Date(),
-      }, { new: true });
+      };
+      if (folder_id !== undefined) updateData.folderId = folder_id;
+      const note = await CreativeNote.findByIdAndUpdate(req.params.id, updateData, { new: true });
       const obj = toId(note);
       const returnUrl = Array.isArray(note!.mediaUrls) && note!.mediaUrls.length > 0 ? note!.mediaUrls[0] : null;
-      res.json({ note: { ...obj, is_pinned: !!note!.isPinned, tags: note!.tags || [], media_url: returnUrl } });
+      res.json({ note: { ...obj, is_pinned: !!note!.isPinned, tags: note!.tags || [], media_url: returnUrl, folder_id: note!.folderId ?? null } });
     } catch (error) {
       console.error("Failed to update note:", error);
       res.status(500).json({ message: "Failed to update note" });

@@ -382,7 +382,7 @@ async function main() {
         end.setHours(23, 59, 59, 999);
         query.date = { $gte: start, $lte: end };
       }
-      let queryBuilder = CreativeNote.find(query).sort({ date: -1, sortOrder: 1, createdAt: -1 });
+      let queryBuilder = CreativeNote.find(query).sort({ isPinned: -1, date: -1, sortOrder: 1, createdAt: -1 });
       if (limit) {
         queryBuilder = queryBuilder.limit(parseInt(limit as string));
       }

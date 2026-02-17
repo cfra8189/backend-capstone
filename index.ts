@@ -1269,7 +1269,11 @@ async function main() {
 
       const epk = await PressKit.findOne({ userId: user._id });
 
-      if (!epk || !epk.isPublished) {
+      // Check if the current requester is the owner of this EPK
+      const currentUserId = req.user?.claims?.sub || req.user?._id?.toString();
+      const isOwner = currentUserId === user._id.toString();
+
+      if (!epk || (!epk.isPublished && !isOwner)) {
         return res.status(404).json({ message: "Press kit not found or not published" });
       }
 

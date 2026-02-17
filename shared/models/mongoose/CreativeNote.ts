@@ -9,7 +9,7 @@ export interface ICreativeNote extends Document {
   tags: string[];
   isPinned: boolean;
   sortOrder: number;
-  folderId: number | null;
+  folderId: mongoose.Types.ObjectId | string | null;
 
   date: Date;
   createdAt: Date;
@@ -25,7 +25,7 @@ const creativeNoteSchema = new Schema<ICreativeNote>({
   tags: { type: [String], default: [] },
   isPinned: { type: Boolean, default: false },
   sortOrder: { type: Number, default: 0 },
-  folderId: { type: Number, default: null },
+  folderId: { type: Schema.Types.ObjectId, ref: "Folder", default: null },
   date: { type: Date, default: Date.now },
 }, { timestamps: true });
 

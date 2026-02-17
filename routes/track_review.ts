@@ -7,6 +7,87 @@ import isAuthenticated from "./auth";
 
 const router = express.Router();
 
+// ── Google Drive Audio Proxy ──
+// Proxies audio from Google Drive share links to bypass CORS restrictions.
+// The frontend calls /api/audio-proxy?url=<google-drive-share-url>
+router.get("/api/audio-proxy", isAuthenticated, async (req: any, res) => {
+    try {
+        const rawUrl = req.query?.url;
+        if (!rawUrl || typeof rawUrl !== "string") {
+            return res.status(400).json({ error: "Missing url query parameter" });
+        }
+
+        // Extract the Google Drive file ID from various link formats
+        let fileId: string | null = null;
+
+        // Format: https://drive.google.com/file/d/FILE_ID/view
+        const fileMatch = rawUrl.match(/\/file\/d\/([^/]+)/);
+        if (fileMatch) fileId = fileMatch[1];
+
+        // Format: https://drive.google.com/open?id=FILE_ID
+        if (!fileId) {
+            const openMatch = rawUrl.match(/[?&]id=([^&]+)/);
+            if (openMatch) fileId = openMatch[1];
+        }
+
+        // Fallback: try to find any long alphanumeric ID
+        if (!fileId) {
+            const genericMatch = rawUrl.match(/[-\w]{25,}/);
+            if (genericMatch) fileId = genericMatch[0];
+        }
+
+        if (!fileId) {
+            return res.status(400).json({ error: "Could not extract Google Drive file ID from the URL" });
+        }
+
+        const directUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+        const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+        const upstream = await fetch(directUrl, {
+            headers: { "User-Agent": userAgent },
+            redirect: "follow",
+        });
+
+        if (!upstream.ok) {
+            return res.status(upstream.status).json({ error: "Google Drive returned an error" });
+        }
+
+        // Forward content-type and content-length headers
+        const contentType = upstream.headers.get("content-type") || "audio/mpeg";
+        const contentLength = upstream.headers.get("content-length");
+
+        res.setHeader("Content-Type", contentType);
+        if (contentLength) res.setHeader("Content-Length", contentLength);
+        res.setHeader("Accept-Ranges", "bytes");
+        res.setHeader("Cache-Control", "public, max-age=3600");
+
+        // Stream the response body
+        if (upstream.body) {
+            const reader = upstream.body.getReader();
+            const pump = async () => {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    res.write(value);
+                }
+                res.end();
+            };
+            pump().catch((err) => {
+                console.error("[Audio Proxy] Stream error:", err);
+                if (!res.headersSent) res.status(500).json({ error: "Stream failed" });
+                else res.end();
+            });
+        } else {
+            res.end();
+        }
+    } catch (error) {
+        console.error("[Audio Proxy] Error:", error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: "Failed to proxy audio" });
+        }
+    }
+});
+
 // Get list of folders for a project (Already using MongoDB)
 router.get("/api/folders", isAuthenticated, async (req: any, res) => {
     try {

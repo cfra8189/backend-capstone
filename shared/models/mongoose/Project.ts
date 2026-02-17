@@ -11,6 +11,10 @@ export interface IProject extends Document {
   folderPath: string;
   rootFolder: string;
   folderId?: mongoose.Types.ObjectId;
+  startDate?: Date;
+  deadline?: Date;
+  releaseDate?: Date;
+  registrationDate?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -26,6 +30,10 @@ const projectSchema = new Schema<IProject>({
   folderPath: { type: String, required: true },
   rootFolder: { type: String, required: true },
   folderId: { type: Schema.Types.ObjectId, ref: "Folder", default: null },
+  startDate: { type: Date, default: null },
+  deadline: { type: Date, default: null },
+  releaseDate: { type: Date, default: null },
+  registrationDate: { type: Date, default: null },
 }, { timestamps: true });
 
 export const Project = mongoose.model<IProject>("Project", projectSchema);

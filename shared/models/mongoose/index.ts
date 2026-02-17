@@ -11,3 +11,4 @@ export { StoredDocument } from "./Document";
 export { EmbedCache, type IEmbedCache } from "./EmbedCache";
 export { Folder, type IFolder } from "./Folder";
 export { Collaboration, type ICollaboration } from "./Collaboration";
+export { CalendarEvent, type ICalendarEvent } from "./CalendarEvent";

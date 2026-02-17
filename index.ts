@@ -40,6 +40,7 @@ import { EmbedCache } from "./shared/models/mongoose/EmbedCache";
 import authRoutes from "./routes/auth";
 import projectRoutes from "./routes/projects";
 import trackReviewRoutes from "./routes/track_review";
+import calendarRoutes from "./routes/calendar";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -335,6 +336,7 @@ async function main() {
   app.use("/api/auth", authRoutes);
 
   app.use("/api/projects", projectRoutes);
+  app.use("/api/calendar", calendarRoutes);
 
   app.get("/api/creative/notes", isAuthenticated, async (req: any, res) => {
     try {

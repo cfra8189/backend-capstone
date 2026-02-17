@@ -22,7 +22,7 @@ function extractYouTubeId(url: string): string | null {
     return match ? match[1] : null;
 }
 
-async function fetchYouTubeStats(videoId: string): Promise<{ plays: number; likes: number; comments: number } | null> {
+async function fetchYouTubeStats(videoId: string): Promise<{ plays: number; likes: number; comments: number; publishedAt?: Date } | null> {
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (!apiKey) {
         console.error("YOUTUBE_API_KEY not set in environment");
@@ -30,7 +30,7 @@ async function fetchYouTubeStats(videoId: string): Promise<{ plays: number; like
     }
 
     try {
-        const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${apiKey}`;
+        const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${videoId}&key=${apiKey}`;
         const response = await fetch(apiUrl);
         const data = await response.json() as any;
 
@@ -40,10 +40,12 @@ async function fetchYouTubeStats(videoId: string): Promise<{ plays: number; like
         }
 
         const stats = data.items[0].statistics;
+        const snippet = data.items[0].snippet;
         return {
             plays: parseInt(stats.viewCount) || 0,
             likes: parseInt(stats.likeCount) || 0,
             comments: parseInt(stats.commentCount) || 0,
+            publishedAt: snippet.publishedAt ? new Date(snippet.publishedAt) : undefined,
         };
     } catch (error) {
         console.error("YouTube API Error:", error);
@@ -120,6 +122,7 @@ router.post("/api/pulse/tracks", isAuthenticated, async (req: any, res) => {
             currentLikes: stats?.likes || 0,
             currentComments: stats?.comments || 0,
             growth7d: 0,
+            publishedAt: stats?.publishedAt,
             status: stats ? "📊 Steady" : "⏳ Collecting Data",
             promoRecommendation: "⏳ TOO EARLY - Need more data",
             dateAdded: new Date(),
@@ -199,6 +202,7 @@ router.post("/api/pulse/refresh", isAuthenticated, async (req: any, res) => {
                     currentLikes: stats.likes,
                     currentComments: stats.comments,
                     growth7d: Math.round(growth * 10) / 10,
+                    publishedAt: stats.publishedAt,
                     status,
                     promoRecommendation: recommendation,
                     lastUpdated: new Date(),

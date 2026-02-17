@@ -9,6 +9,7 @@ export interface ITrackedTrack extends Document {
     currentLikes: number;
     currentComments: number;
     growth7d: number;
+    publishedAt?: Date;
     status: string;
     promoRecommendation: string;
     dateAdded: Date;
@@ -24,6 +25,7 @@ const TrackedTrackSchema = new Schema<ITrackedTrack>({
     currentLikes: { type: Number, default: 0 },
     currentComments: { type: Number, default: 0 },
     growth7d: { type: Number, default: 0 },
+    publishedAt: { type: Date },
     status: { type: String, default: "⏳ Collecting Data" },
     promoRecommendation: { type: String, default: "⏳ TOO EARLY - Need more data" },
     dateAdded: { type: Date, default: Date.now },

@@ -18,6 +18,7 @@ const pressKitSchema = new Schema({
   bookingEmail: { type: String, default: null },
   technicalRider: { type: String, default: null },
   stagePlot: { type: String, default: null },
+  backgroundImageUrl: { type: String, default: null },
   isPublished: { type: Boolean, default: false },
 }, { timestamps: true });
 

@@ -57,6 +57,44 @@ export function registerObjectStorageRoutes(app: Express): void {
   });
 
   /**
+   * Finalize a file upload by setting its visibility and other metadata (requires authentication).
+   *
+   * Request body (JSON):
+   * {
+   *   "objectPath": "/objects/uploads/uuid",
+   *   "visibility": "public"
+   * }
+   */
+  app.post("/api/uploads/finalize", isAuthenticated, async (req, res) => {
+    try {
+      const { objectPath, visibility } = req.body;
+
+      if (!objectPath) {
+        return res.status(400).json({
+          error: "Missing required field: objectPath",
+        });
+      }
+
+      const anyReq = req as any;
+      const userId = (anyReq.user?.claims?.sub || anyReq.user?._id?.toString()) as string;
+
+      await objectStorageService.trySetObjectEntityAclPolicy(objectPath, {
+        owner: userId,
+        visibility: visibility || "private",
+      });
+
+      res.json({
+        success: true,
+        objectPath,
+        visibility: visibility || "private",
+      });
+    } catch (error) {
+      console.error("Error finalizing upload:", error);
+      res.status(500).json({ error: "Failed to finalize upload" });
+    }
+  });
+
+  /**
    * Serve uploaded objects.
    *
    * GET /objects/:objectPath(*)

@@ -4,7 +4,7 @@ export interface ICalendarEvent extends Document {
     userId: mongoose.Types.ObjectId;
     projectId?: mongoose.Types.ObjectId;
     title: string;
-    type: "session" | "habit" | "deadline" | "milestone";
+    type: "session" | "habit" | "deadline" | "milestone" | "task";
     startDate: Date;
     endDate?: Date;
     status: "pending" | "completed" | "missed";

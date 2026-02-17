@@ -195,9 +195,22 @@ router.put("/:id", isAuthenticated, async (req: any, res) => {
     await folder.save();
 
     // Update paths of all child folders
+    // We use an aggregation pipeline to perform the string replacement
     await Folder.updateMany(
       { userId, path: { $regex: `^${oldPath}/` } },
-      { $set: { path: { $regex: new RegExp(`^${oldPath}/`), $replace: `${newPath}/` } } }
+      [
+        {
+          $set: {
+            path: {
+              $replaceOne: {
+                input: "$path",
+                find: `${oldPath}/`,
+                replacement: `${newPath}/`
+              }
+            }
+          }
+        }
+      ]
     );
 
     await folder.populate('parentId', 'name path');

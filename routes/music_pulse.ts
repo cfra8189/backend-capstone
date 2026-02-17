@@ -75,10 +75,8 @@ function calculatePromoRecommendation(growth: number, totalPlays: number, status
 
 // ---------- Routes ----------
 
-router.use(isAuthenticated);
-
 // GET /api/pulse/tracks — List all tracked tracks
-router.get("/api/pulse/tracks", async (req: any, res) => {
+router.get("/api/pulse/tracks", isAuthenticated, async (req: any, res) => {
     try {
         const userId = req.user.claims.sub;
         const tracks = await TrackedTrack.find({ userId }).sort({ dateAdded: -1 });
@@ -90,7 +88,7 @@ router.get("/api/pulse/tracks", async (req: any, res) => {
 });
 
 // POST /api/pulse/tracks — Add a new tracked track
-router.post("/api/pulse/tracks", async (req: any, res) => {
+router.post("/api/pulse/tracks", isAuthenticated, async (req: any, res) => {
     try {
         const userId = req.user.claims.sub;
         const { trackName, youtubeUrl } = req.body;
@@ -149,7 +147,7 @@ router.post("/api/pulse/tracks", async (req: any, res) => {
 });
 
 // DELETE /api/pulse/tracks/:id — Remove a tracked track
-router.delete("/api/pulse/tracks/:id", async (req: any, res) => {
+router.delete("/api/pulse/tracks/:id", isAuthenticated, async (req: any, res) => {
     try {
         const userId = req.user.claims.sub;
         const track = await TrackedTrack.findById(req.params.id);
@@ -170,7 +168,7 @@ router.delete("/api/pulse/tracks/:id", async (req: any, res) => {
 });
 
 // POST /api/pulse/refresh — Refresh stats for all tracks
-router.post("/api/pulse/refresh", async (req: any, res) => {
+router.post("/api/pulse/refresh", isAuthenticated, async (req: any, res) => {
     try {
         const userId = req.user.claims.sub;
         const tracks = await TrackedTrack.find({ userId });
@@ -233,7 +231,7 @@ router.post("/api/pulse/refresh", async (req: any, res) => {
 });
 
 // GET /api/pulse/history — Get all history for charting
-router.get("/api/pulse/history", async (req: any, res) => {
+router.get("/api/pulse/history", isAuthenticated, async (req: any, res) => {
     try {
         const userId = req.user.claims.sub;
         const history = await PulseHistory.find({ userId }).sort({ timestamp: 1 });
@@ -245,7 +243,7 @@ router.get("/api/pulse/history", async (req: any, res) => {
 });
 
 // GET /api/pulse/history/:trackId — Get history for a specific track
-router.get("/api/pulse/history/:trackId", async (req: any, res) => {
+router.get("/api/pulse/history/:trackId", isAuthenticated, async (req: any, res) => {
     try {
         const userId = req.user.claims.sub;
         const history = await PulseHistory.find({

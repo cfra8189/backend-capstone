@@ -12,3 +12,5 @@ export { EmbedCache, type IEmbedCache } from "./EmbedCache";
 export { Folder, type IFolder } from "./Folder";
 export { Collaboration, type ICollaboration } from "./Collaboration";
 export { CalendarEvent, type ICalendarEvent } from "./CalendarEvent";
+export { TrackedTrack, type ITrackedTrack } from "./TrackedTrack";
+export { PulseHistory, type IPulseHistory } from "./PulseHistory";

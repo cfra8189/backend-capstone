@@ -41,6 +41,7 @@ import authRoutes from "./routes/auth";
 import projectRoutes from "./routes/projects";
 import trackReviewRoutes from "./routes/track_review";
 import calendarRoutes from "./routes/calendar";
+import musicPulseRoutes from "./routes/music_pulse";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -110,6 +111,9 @@ async function main() {
 
   // Mount track review routes
   app.use(trackReviewRoutes);
+
+  // Mount music pulse routes
+  app.use(musicPulseRoutes);
 
   app.get("/api/debug/info", (req, res) => {
     res.json({
